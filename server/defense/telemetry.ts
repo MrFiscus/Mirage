@@ -9,7 +9,7 @@ export interface Telemetry {
 }
 
 // Read-only, fixed queries. Nothing from logs or the model ever becomes a command.
-const QUERIES = {
+export const QUERIES = {
   processes: 'ps -eo pid,args | grep "[r]ogue-miner-$BATMAN_SANDBOX_ID" || true',
   outbound: "grep OUTBOUND logs/network.log || true",
   cron: "ls cron | grep -v '^.keep$' || true",

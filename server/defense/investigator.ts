@@ -2,8 +2,18 @@ import type { Incident } from "./contracts.js";
 import { signalCount, signalsFrom } from "./alerts.js";
 import type { Telemetry } from "./telemetry.js";
 
+/** What the investigator was given, what the model answered, and what the guardrails did (for the explain view). */
+export interface InvestigationTrace {
+  sent: string[];
+  model?: string;
+  raw?: { severity?: unknown; confidence?: unknown; cited?: unknown; technicalSummary?: string; businessSummary?: string };
+  guard: string;
+  ms?: number;
+}
+
 export interface Investigation {
   engine?: string;      // which investigator produced this (audit only, not part of Incident)
+  trace?: InvestigationTrace;
   severity: Incident["severity"];
   confidence: number;
   evidence: string[];
@@ -95,6 +105,7 @@ export class RuleInvestigator implements Investigator {
     const confidence = Math.min(0.97, Number((0.5 + 0.15 * serious + (persistence ? 0.05 : 0)).toFixed(2)));
     return {
       engine: "rules", severity, confidence, evidence,
+      trace: { sent: evidence, guard: "Built-in rules: severity from the signals that were observed (no AI model configured)." },
       technicalSummary: `${n} of 4 indicators present (process, outbound, cron persistence, file integrity); ${serious} serious (program, outbound, file integrity). Findings: ${findings.join("; ")}. Evidence is cited below. Data loss has not been confirmed by any query.`,
       businessSummary: `${plainFindings(t)} We have not confirmed any data loss. Batman is testing a fix on a copy of the machine first; nothing on the live system changes until that test passes.`,
     };

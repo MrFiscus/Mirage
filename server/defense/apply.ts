@@ -1,6 +1,6 @@
 import { signalCount, signalsFrom } from "./alerts.js";
 import { collectTelemetry } from "./telemetry.js";
-import { audit, mustGet, runs, update } from "./run.js";
+import { audit, mustGet, runs, traceStep, update } from "./run.js";
 import { sendSms } from "./core.js";
 
 export const analystPhone = () => process.env.ANALYST_PHONE ?? "+15550001002";
@@ -15,6 +15,7 @@ export async function applyFix(incidentId: string): Promise<void> {
   if (plan.drastic && !plan.approvedBy) throw new Error("refusing to apply a drastic fix without approval");
 
   audit("fix.apply", `running ${plan.commands.length} commands on company machine`);
+  const applyStarted = Date.now();
   for (const cmd of plan.commands) {
     const r = await ctx.company.exec(cmd);
     if (r.code !== 0) {
@@ -23,8 +24,11 @@ export async function applyFix(incidentId: string): Promise<void> {
       return;
     }
   }
+  traceStep(incidentId, "applied", { commands: plan.commands, approvedBy: plan.approvedBy ?? null }, Date.now() - applyStarted);
+  const verifyStarted = Date.now();
   const after = await collectTelemetry(ctx.company);
   const clean = signalCount(signalsFrom(after)) === 0 && after.health.every((c) => c.passed);
+  traceStep(incidentId, "verified", { clean, health: after.health }, Date.now() - verifyStarted);
   audit("fix.verify", clean ? "company machine verified clean" : "verification found remaining issues");
   if (!clean) {
     update(incident, { status: "fix_rejected", technicalSummary: incident.technicalSummary + " Post-fix verification still found issues." });

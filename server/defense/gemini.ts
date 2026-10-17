@@ -1,5 +1,5 @@
 import type { Telemetry } from "./telemetry.js";
-import { buildEvidence, maxSeverity, RuleInvestigator, severityFloor, unsupportedClaims, type Investigation, type Investigator } from "./investigator.js";
+import { buildEvidence, maxSeverity, type InvestigationTrace, RuleInvestigator, severityFloor, unsupportedClaims, type Investigation, type Investigator } from "./investigator.js";
 
 // Free-tier lite model, pinned by name so a "-latest" alias can't change behaviour mid-demo.
 export const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
@@ -45,15 +45,23 @@ export class GeminiInvestigator implements Investigator {
 
   async investigate(t: Telemetry): Promise<Investigation> {
     const { evidence } = buildEvidence(t);
+    const seen: { raw?: InvestigationTrace["raw"] } = {};
+    const started = Date.now();
     try {
-      return await this.ask(evidence, t);
+      const inv = await this.ask(evidence, t, seen);
+      return { ...inv, trace: { ...inv.trace!, ms: Date.now() - started } };
     } catch (e) {
+      const reason = (e as Error).message.slice(0, 120);
       const base = await this.fallback.investigate(t);
-      return { ...base, engine: `rules (gemini failed: ${(e as Error).message.slice(0, 120)})` };
+      return {
+        ...base,
+        engine: `rules (gemini failed: ${reason})`,
+        trace: { sent: evidence, model: this.model, raw: seen.raw, ms: Date.now() - started, guard: `Rejected Gemini's answer: ${reason}. The built-in rules answered instead.` },
+      };
     }
   }
 
-  private async ask(evidence: string[], t: Telemetry): Promise<Investigation> {
+  private async ask(evidence: string[], t: Telemetry, seen: { raw?: InvestigationTrace["raw"] }): Promise<Investigation> {
     const numbered = evidence.map((line, i) => `[${i}] ${line}`).join("\n");
     const res = await this.fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent`, {
       method: "POST",
@@ -69,6 +77,7 @@ export class GeminiInvestigator implements Investigator {
     const body = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
     const text = body.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
     const out = JSON.parse(text) as Record<string, unknown>;
+    seen.raw = { severity: out.severity, confidence: out.confidence, cited: out.citedEvidence, technicalSummary: cap(out.technicalSummary, 900), businessSummary: cap(out.businessSummary, 500) };
 
     const severity = out.severity;
     if (severity !== "low" && severity !== "medium" && severity !== "high") throw new Error("bad severity");
@@ -94,6 +103,12 @@ export class GeminiInvestigator implements Investigator {
       severity: finalSeverity,
       confidence: Math.min(1, Math.max(0, Number(confidence.toFixed(2)))),
       evidence: cited, technicalSummary, businessSummary,
+      trace: {
+        sent: evidence, model: this.model, raw: seen.raw,
+        guard: finalSeverity !== severity
+          ? `Code floor raised severity from ${severity} to ${floor}: the observed signals justify at least ${floor}, so the model is not allowed to go lower.`
+          : "Passed every guardrail: severity at or above what was observed, every claim backed by evidence, only real lines cited.",
+      },
     };
   }
 }

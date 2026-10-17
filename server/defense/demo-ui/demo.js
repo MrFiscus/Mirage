@@ -228,7 +228,7 @@ function renderBar() {
     <span class="chips">${i ? `
       <span class="chip">Machine: ${i.backend === "daytona" ? "Daytona" : "local sandbox"}</span>
       <span class="chip">AI: ${i.investigator === "gemini" ? "Gemini" : "built-in rules"}</span>
-      <span class="chip">Fix planner: Droid placeholder</span>` : ""}</span>`;
+      <span class="chip">Fix planner: Droid placeholder</span>` : ""}<a href="explain/" style="color:#c7cbff;margin-left:6px;white-space:nowrap">How it works →</a></span>`;
   bar.querySelectorAll("[data-tier]").forEach((b) => (b.onclick = () => start(b.dataset.tier)));
   bar.querySelector("#clear").onclick = clearDemo;
 }

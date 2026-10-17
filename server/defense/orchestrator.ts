@@ -6,9 +6,10 @@ import type { Investigator } from "./investigator.js";
 import { createInvestigator } from "./investigators.js";
 import { ScriptedPlanner, type FixPlanner } from "./planner.js";
 import { createCompanyMachine, VIRUS_PATH } from "./sandbox/index.js";
-import { audit, runs, update } from "./run.js";
+import { audit, runs, timed, traceStart, traceStep, update } from "./run.js";
 import { sendSms } from "./core.js";
-import { collectTelemetry, type Telemetry } from "./telemetry.js";
+import { collectTelemetry, QUERIES, type Telemetry } from "./telemetry.js";
+import { severityFloor } from "./investigator.js";
 import type { Incident } from "./contracts.js";
 
 export interface ScenarioDeps {
@@ -23,43 +24,48 @@ export async function startScenario(scenario: string, deps: ScenarioDeps = {}, i
   const investigator = deps.investigator ?? createInvestigator();
   const planner = deps.planner ?? new ScriptedPlanner();
 
-  const company = await createCompanyMachine();
+  traceStart(id);
+  const company = await timed(id, "machine.created", () => createCompanyMachine(), (m) => ({ id: m.id, backend: process.env.SANDBOX_BACKEND === "daytona" ? "daytona" : "local" }));
   audit("scenario.start", `scenario ${scenario}; company machine ${company.id} created`);
   const baseline = await collectTelemetry(company);
   const unhealthy = baseline.health.filter((c) => !c.passed);
   if (unhealthy.length) throw new Error(`company machine unhealthy before the attack: ${unhealthy.map((c) => `${c.name} (${c.detail ?? "failed"})`).join("; ")}`);
 
-  await company.runScript(VIRUS_PATH, scenario === "low" ? "low" : ""); // the simulated attack
+  await timed(id, "threat.started", () => company.runScript(VIRUS_PATH, scenario === "low" ? "low" : ""), () => ({ tier: scenario })); // the simulated attack
   audit("sim.virus", "harmless simulated virus executed on company machine", "simulator");
 
-  const telemetry = await collectTelemetry(company);
+  const telemetry = await timed(id, "queries", () => collectTelemetry(company), (t) => ({ queries: describeQueries(t) }));
   logQueries(telemetry);
   const incident = detect(telemetry, id);
   if (!incident) throw new Error("no alert raised");
   runs.set(incident.id, { company });
   update(incident, {});
+  traceStep(id, "alert", { title: incident.title });
 
   update(incident, { status: "investigating" });
-  const { engine, ...inv } = await investigator.investigate(telemetry);
+  const { engine, trace, ...inv } = await investigator.investigate(telemetry);
   update(incident, inv);
   audit("investigation.done", `${engine ?? "investigator"}: severity ${inv.severity}, confidence ${inv.confidence}, ${inv.evidence.length} evidence items`);
+  traceStep(id, "investigation", { engine, trace, severity: inv.severity, confidence: inv.confidence, evidence: inv.evidence, floor: severityFloor(telemetry) }, trace?.ms);
 
   audit("voice.briefing_ready", "phone briefing updated for this incident");
-  const plan = await planner.plan(scenario);
+  const plan = await timed(id, "plan", () => planner.plan(scenario), (p) => ({ planner: planner.name ?? "planner", commands: p.commands, drastic: p.drastic }));
   audit("fix.planned", `${planner.name ?? "planner"}: ${plan.commands.length} step${plan.commands.length === 1 ? "" : "s"}, ${plan.drastic ? "major change" : "minor change"}`);
   update(incident, { status: "testing_fix", proposedFix: plan });
-  const clone = await company.clone();
+  const clone = await timed(id, "clone.created", () => company.clone(), (c) => ({ id: c.id }));
   runs.get(incident.id)!.clone = clone;
   audit("clone.created", `clone ${clone.id} created`);
-  const report = await runCloneCheck(clone, plan.commands);
+  const report = await timed(id, "clone.checked", () => runCloneCheck(clone, plan.commands), (r) => ({ before: r.before, checks: r.cloneCheck.checks, passed: r.cloneCheck.passed, remaining: r.remaining, commandFailures: r.commandFailures }));
   const failedBefore = report.before.filter((c) => !c.passed).map((c) => c.name);
   audit("clone.checked", `before fix failing: [${failedBefore.join(", ")}]; after fix passed=${report.cloneCheck.passed}${report.remaining.length ? `; still present: ${report.remaining.join(" | ")}` : ""}${report.commandFailures.length ? `; failed: ${report.commandFailures.join(" | ")}` : ""}`);
   const checked = { ...plan, cloneCheck: report.cloneCheck };
   update(incident, { proposedFix: checked });
   await clone.destroy();
+  traceStep(id, "clone.destroyed", { id: clone.id });
 
   const decision = decide(checked);
   audit("decision", `${decision.action}: ${decision.reason}`);
+  traceStep(id, "decision", { action: decision.action, reason: decision.reason, passed: report.cloneCheck.passed, drastic: plan.drastic });
   if (decision.action === "reject") {
     update(incident, {
       status: "fix_rejected",
@@ -78,6 +84,17 @@ export async function startScenario(scenario: string, deps: ScenarioDeps = {}, i
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/** The exact read-only commands and what each found, for the explain view. */
+function describeQueries(t: Telemetry) {
+  const s = signalsFrom(t);
+  return [
+    { name: "Running programs", command: QUERIES.processes, found: t.processes },
+    { name: "Network log", command: QUERIES.outbound, found: s.unknownOutbound, note: `${t.outbound.length} outbound line(s), ${s.unknownOutbound.length} to unknown addresses` },
+    { name: "Scheduled tasks", command: QUERIES.cron, found: t.cron },
+    { name: "App health", command: QUERIES.health, found: t.health.filter((c) => !c.passed).map((c) => `${c.name}: ${c.detail ?? "failed"}`) },
+  ];
+}
 
 /** One audit line per read-only query, worded for the demo feed. */
 function logQueries(t: Telemetry): void {

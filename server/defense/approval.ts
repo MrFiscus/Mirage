@@ -1,5 +1,5 @@
 import { applyFix } from "./apply.js";
-import { audit, mustGet, update } from "./run.js";
+import { audit, mustGet, traceStep, update } from "./run.js";
 import { lookupCaller } from "./core.js";
 
 /** Analyst declines the fix: nothing is applied and the ticket closes as fix_rejected. */
@@ -12,6 +12,7 @@ export async function reject(incidentId: string, fromPhone: string): Promise<voi
   const incident = mustGet(incidentId);
   if (incident.status !== "awaiting_approval") throw new Error(`incident is ${incident.status}, not awaiting approval`);
   audit("approval.rejected", `${caller.name} rejected the fix for ${incidentId}`, caller.name);
+  traceStep(incidentId, "human", { action: "rejected", by: caller.name });
   update(incident, {
     status: "fix_rejected",
     technicalSummary: incident.technicalSummary + ` Analyst ${caller.name} rejected the proposed fix; nothing was applied.`,
@@ -29,6 +30,7 @@ export async function approve(incidentId: string, fromPhone: string): Promise<vo
   const incident = mustGet(incidentId);
   if (incident.status !== "awaiting_approval" || !incident.proposedFix) throw new Error(`incident is ${incident.status}, not awaiting approval`);
   audit("approval.granted", `${caller.name} approved ${incidentId}`, caller.name);
+  traceStep(incidentId, "human", { action: "approved", by: caller.name });
   update(incident, { proposedFix: { ...incident.proposedFix, approvedBy: caller.name } });
   await applyFix(incidentId);
 }

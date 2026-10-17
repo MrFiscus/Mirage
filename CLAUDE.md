@@ -50,7 +50,7 @@ batman/
   server/core/      Person 3: event bus, db, sessions, audit log
   server/voice/     Person 1: ElevenLabs webhook, verification, case tools
   server/defense/   Person 2: alerts, investigator, sandboxes, Droid, approvals
-    demo-ui/        (Evan) judge-facing ticketing demo served at /demo
+    demo-ui/        (Evan) judge-facing ticketing demo served at /demo; explain/ is /demo/explain
   console/          Person 3: React live console
   sim/              Person 2: test app + harmless simulated virus
   data/             Person 3: synthetic users, incidents, labeled events
@@ -140,10 +140,11 @@ Until the real piece exists, each lane mocks what it needs (e.g. `emit = console
 
 Done, tested, on `main`:
 - **Run it:** `npm run dev`, open `http://localhost:8787/demo`. Two buttons: **Low tier alert** (unapproved scheduled task; AI rates it low; Batman fixes it itself) and **High tier alert** (unknown program + outside connection + changed file; needs analyst Approve/Reject in the ticket). Plain-language ticket queue with filler tickets and a live activity feed naming each system used.
+- **How it works:** `http://localhost:8787/demo/explain` (also linked from `/demo`). Click a tier; the real engine runs at full speed and the page replays its recorded steps one per **Next** (or →, Space, PageDown for a clicker): machines created, exact read-only commands and results, the evidence sent to Gemini, Gemini's raw answer, the guardrail verdict, the fix plan, the copy's before/after checks, the decision rule as a flowchart, approval, apply, verify, then a real start-to-finish timing (about 2.5 s local, about 11 s on Daytona, mostly machine creation). Data comes from `GET /defense/trace/:id`.
 - CLI: `npm run scenario low|high|1|2|3 [-- --approve]`. Scenarios: `1` approve path, `2` harmful fix rejected by the clone check, `3` low-risk auto-apply. Person 3's console at `/` also has a demo panel for 1/2/3.
 - Loop: simulated virus, alert, read-only queries, investigator (Gemini or rules), scripted fix plan, test on a clone with health checks before/after, decision rule, approve/reject, apply, verify clean.
 - Engine uses the real core (`server/core`) through `server/defense/core.ts`; `mountDefense()` in `server/index.ts` mounts routes and `/demo`.
-- Routes: `POST /defense/scenario/:id/start` (returns at once; progress arrives as ConsoleEvents), `POST /defense/approve` `{incidentId, phone}`, `POST /defense/demo-approve/:id`, `POST /defense/demo-reject/:id`, `GET /defense/info`.
+- Routes: `POST /defense/scenario/:id/start` (returns at once; progress arrives as ConsoleEvents), `POST /defense/approve` `{incidentId, phone}`, `POST /defense/demo-approve/:id`, `POST /defense/demo-reject/:id`, `GET /defense/info`, `GET /defense/trace/:id`.
 - Tests: `npm test` (41): engine, severity rubric table, Gemini severity floor and claim guard, fix-plan portability, both sandbox backends, Gemini failure modes with mocked network, and voice tools reading real defense incidents (role views, refusals, lockout).
 
 Config (`.env`, gitignored; names in `.env.example`):

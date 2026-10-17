@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { approve, reject } from "./approval.js";
 import { analystPhone } from "./apply.js";
-import { audit } from "./run.js";
+import { audit, getTrace } from "./run.js";
 import { getIncident } from "./core.js";
 import { newIncidentId, startScenario } from "./orchestrator.js";
 
@@ -56,4 +56,11 @@ defenseRouter.post("/defense/demo-reject/:incidentId", async (req, res) => {
     await reject(req.params.incidentId, analystPhone());
     res.json({ status: getIncident(req.params.incidentId)?.status });
   } catch (e) { res.status(409).json({ error: (e as Error).message }); }
+});
+
+// Step-by-step record of one run (timings, what Gemini was sent and answered, guardrail outcome) for /demo/explain.
+defenseRouter.get("/defense/trace/:incidentId", (req, res) => {
+  const t = getTrace(req.params.incidentId);
+  if (!t) return res.status(404).json({ error: "no trace for this incident" });
+  res.json(t);
 });
