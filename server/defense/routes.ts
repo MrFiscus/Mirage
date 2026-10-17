@@ -11,8 +11,10 @@ const SCENARIOS = {
   "1": "Virus, fix passes the clone check, waits for analyst APPROVE",
   "2": "Virus, proposed fix is harmful, clone check rejects it",
   "3": "Virus, low-risk fix passes the clone check and auto-applies",
-  low: "Low tier alert: unapproved scheduled task, fixed automatically",
-  high: "High tier alert: unknown program contacting outside address, needs analyst approval",
+  low: "Low tier: malicious file download on Robin's PC, quarantined automatically",
+  high: "High tier: sign-in from an unknown location, analyst approves locking the account",
+  "virus-low": "Server: unapproved scheduled task, fixed automatically",
+  "virus-high": "Server: unknown program contacting an outside address, needs analyst approval",
 } as const;
 
 defenseRouter.get("/defense/info", (_req, res) =>
@@ -60,7 +62,6 @@ defenseRouter.post("/defense/demo-reject/:incidentId", async (req, res) => {
 
 // Step-by-step record of one run (timings, what Gemini was sent and answered, guardrail outcome) for /demo/explain.
 defenseRouter.get("/defense/trace/:incidentId", (req, res) => {
-  const t = getTrace(req.params.incidentId);
-  if (!t) return res.status(404).json({ error: "no trace for this incident" });
-  res.json(t);
+  // null (not 404) for runs from before this server started, so pages loading old tickets stay quiet.
+  res.json(getTrace(req.params.incidentId) ?? null);
 });

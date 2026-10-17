@@ -160,3 +160,8 @@ details.tech pre { background: #f6f7f9; border: 1px solid var(--line); border-ra
   .feed li .who { grid-column: 2; justify-self: start; }
   .feed li .what { grid-column: 1 / -1; }
 }
+
+/* Query used for each step, under the plain sentence */
+.feed code.query { display: block; margin-top: 3px; font: 12px/1.45 "JetBrains Mono", ui-monospace, monospace; color: #6b7280; overflow-wrap: anywhere; }
+.footnote { margin: 10px 0 0; font-size: 12px; color: var(--muted); }
+.p-undeclared { color: var(--muted); font-style: italic; font-weight: 500; }

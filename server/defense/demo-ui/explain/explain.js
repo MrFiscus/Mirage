@@ -9,6 +9,8 @@ const STATUS = {
 };
 const WHO = {
   batman: ["Batman", "w-batman"], daytona: ["Daytona", "w-daytona"], gemini: ["Gemini", "w-gemini"], rules: ["Rules", "w-batman"],
+  edr: ["Endpoint (EDR)", "w-daytona"], idp: ["Identity", "w-daytona"], virustotal: ["VirusTotal (placeholder)", "w-elevenlabs"],
+  ipinfo: ["IPinfo (placeholder)", "w-elevenlabs"], abuseipdb: ["AbuseIPDB (placeholder)", "w-elevenlabs"], photon: ["Photon (demo mode)", "w-photon"],
   droid: ["Droid (placeholder)", "w-droid"], analyst: ["Analyst", "w-analyst"], sim: ["Demo", "w-sim"], code: ["Guardrail (code)", "w-elevenlabs"],
 };
 const ms = (n) => (n == null ? "" : n < 1000 ? `${n} ms` : `${(n / 1000).toFixed(1)} s`);
@@ -26,8 +28,9 @@ function slides() {
   for (const s of t.steps) {
     const d = s.data;
     switch (s.kind) {
-      case "machine.created": out.push({ key: "machine", who: "daytona", title: "Batman connects to the company machine", at: at(s), ms: s.ms, d }); break;
-      case "threat.started": out.push({ key: "threat", who: "sim", title: "A simulated threat runs on it", at: at(s), ms: s.ms, d }); break;
+      case "machine.created": out.push({ key: "machine", who: "daytona", title: d.role === "pc" ? "Batman connects to Robin's PC" : "Batman connects to the company machine", at: at(s), ms: s.ms, d }); break;
+      case "threat.started": out.push({ key: "threat", who: "sim", title: d.text ? "The demo sets up the alert" : "A simulated threat runs on it", at: at(s), ms: s.ms, d }); break;
+      case "agent": out.push({ key: `agent-${s.at}`, kind: "agent", who: d.who, title: d.text, at: at(s), ms: s.ms, d }); break;
       case "queries": out.push({ key: "queries", who: "batman", title: "Batman inspects the machine with read-only queries", at: at(s), ms: s.ms, d }); break;
       case "alert": out.push({ key: "alert", who: "batman", title: "Alert raised: a ticket is opened", at: at(s), d }); break;
       case "investigation": {
@@ -67,15 +70,24 @@ function finished() {
 function body(sl) {
   const d = sl.d;
   switch (sl.key) {
-    case "machine": return `<p class="why">A ${d.backend === "daytona" ? "real Daytona cloud sandbox" : "local sandbox"} stands in for the company's payroll server, <b>acme-payroll-01</b>. It runs a small app with its own tests.</p>
+    case "machine": return d.role === "pc"
+      ? `<p class="why">A ${d.backend === "daytona" ? "real Daytona cloud sandbox" : "local sandbox"} plays <b>ROBIN-PC</b>, the work computer of robin.business@harvard.edu: their Business folder, browser downloads, endpoint and sign-in logs.</p>
+      <dl class="kv"><dt>Machine id</dt><dd><code>${esc(d.id)}</code></dd><dt>Where</dt><dd>${d.backend === "daytona" ? "Daytona (cloud)" : "Local sandbox"}</dd></dl>`
+      : `<p class="why">A ${d.backend === "daytona" ? "real Daytona cloud sandbox" : "local sandbox"} stands in for the company's payroll server, <b>acme-payroll-01</b>. It runs a small app with its own tests.</p>
       <dl class="kv"><dt>Machine id</dt><dd><code>${esc(d.id)}</code></dd><dt>Where</dt><dd>${d.backend === "daytona" ? "Daytona (cloud)" : "Local sandbox"}</dd></dl>`;
-    case "threat": return d.tier === "low"
+    case "threat": if (d.text) return `<p class="why">${esc(d.text)}.</p><p class="note">A harmless setup script written for this demo. No real malware and nothing leaves the machine.</p>`;
+      return d.tier === "low"
       ? `<p class="why">A harmless script written for this demo adds a <b>scheduled task IT never approved</b>. Nothing runs, nothing connects out, no files change.</p>`
       : `<p class="why">A harmless script written for this demo <b>starts an unknown program</b>, writes a <b>fake connection to an outside address</b> into the network log, <b>changes an app file</b> and <b>adds a scheduled task</b>.</p><p class="note">No real malware. The "connection" is a line in a log; nothing leaves the machine.</p>`;
     case "queries": return `<p class="why">Four fixed, read-only commands. Batman can't run anything else here, and whatever the logs say is treated as data, never as instructions.</p>
       <table class="q"><thead><tr><th>Check</th><th>Exact command</th><th>Found</th></tr></thead><tbody>
       ${d.queries.map((q) => `<tr><td><b>${esc(q.name)}</b></td><td><code>${esc(q.command)}</code></td><td>${q.found.length ? `<span class="found">${q.found.length} problem${q.found.length > 1 ? "s" : ""}</span><br><code>${q.found.map(esc).join("<br>")}</code>` : `<span class="nothing">Nothing unusual</span>`}</td></tr>`).join("")}
       </tbody></table>`;
+    default:
+      if (sl.kind === "agent") return `<p class="why">The exact query Batman ran${/placeholder/.test(d.query) ? " (answered from the demo's local intel list instead of the live service)" : ", read-only"}:</p>
+        <pre class="code">${esc(d.query)}</pre>
+        ${d.result?.length ? `<p class="note" style="margin-top:14px">What came back:</p><pre class="code datablock">${d.result.map(esc).join("\n")}</pre>` : ""}`;
+      return "";
     case "alert": return `<p class="why">At least one check found something, so Batman opens a ticket in the queue and assigns it to itself.</p><p class="big">${esc(d.title)}</p>`;
     case "sent": {
       const sent = d.trace?.sent ?? [];
@@ -105,10 +117,10 @@ function body(sl) {
         <dt>Final severity</dt><dd class="big">${esc(PRIORITY[d.severity])} <span style="font-size:16px;font-weight:400;color:var(--muted)">· ${Math.round(d.confidence * 100)}% confident</span></dd></dl>
         <div class="verdict ${cls}">${head}<small>${esc(g)}</small></div>`;
     }
-    case "plan": return `<p class="why">The fix plan. In this build a scripted plan stands in for Factory Droid; every plan, scripted or Droid, must pass the same test before it can touch the real machine.</p>
+    case "plan": return `<p class="why">${d.text ? `<b>${esc(d.text)}.</b> ` : ""}In this build a scripted plan stands in for Factory Droid; every plan, scripted or Droid, must pass the same test before it can touch the real machine.</p>
       <pre class="code">${d.commands.map(esc).join("\n")}</pre>
-      <p class="note">${d.drastic ? "<b>Major change</b>: it stops a running program and restores files, so a person must approve it." : "<b>Minor change</b>: if it passes the test, Batman may apply it on its own."}</p>`;
-    case "clone": return `<p class="why">Batman never tests on the real machine. It makes a separate copy, including the running bad program, so the test is realistic.</p>
+      <p class="note">${d.drastic ? "<b>Major change</b>, so a person must approve it." : "<b>Minor change</b>: if it passes the test, Batman may apply it on its own."}</p>`;
+    case "clone": return `<p class="why">Batman never tests on the real machine. It makes a separate copy with everything on it, so the test is realistic.</p>
       <dl class="kv"><dt>Copy id</dt><dd><code>${esc(d.id)}</code></dd></dl>`;
     case "checked": {
       const before = new Map((d.before ?? []).map((c) => [c.name, c.passed]));
@@ -145,14 +157,21 @@ function body(sl) {
     case "summary": return summary();
     case "failed": return `<div class="verdict bad">Stopped after the "${esc(d.after)}" step<small>${esc(d.message)}</small></div>
       <p class="note">Any machines this run created have been deleted. The terminal running <code>npm run dev</code> shows each step as it happens; check it, then pick an alert to try again.</p>`;
-    default: return "";
   }
 }
 
-const LABEL = { "machine.created": "Connect to machine", "threat.started": "Simulated threat", queries: "Read-only queries", investigation: "AI investigation + guardrails", plan: "Plan the fix", "clone.created": "Make a test copy", "clone.checked": "Test the fix on the copy", applied: "Apply to real machine", verified: "Re-check real machine" };
+const LABEL = { agent: "Queries and intel lookups", "machine.created": "Connect to machine", "threat.started": "Simulated threat", queries: "Read-only queries", investigation: "AI investigation + guardrails", plan: "Plan the fix", "clone.created": "Make a test copy", "clone.checked": "Test the fix on the copy", applied: "Apply to real machine", verified: "Re-check real machine" };
 function summary() {
   const t = state.trace;
-  const steps = t.steps.filter((s) => s.ms != null && LABEL[s.kind]);
+  // Agent queries and intel lookups are summed into one bar; everything else keeps its own.
+  const steps = [];
+  for (const s of t.steps) {
+    if (s.ms == null) continue;
+    if (s.kind === "agent") {
+      const bar = steps.find((b) => b.kind === "agent");
+      if (bar) bar.ms += s.ms; else steps.push({ kind: "agent", ms: s.ms });
+    } else if (LABEL[s.kind]) steps.push({ kind: s.kind, ms: s.ms });
+  }
   const human = t.steps.find((s) => s.kind === "human");
   // Wall-clock start to finish, minus any time spent waiting for the analyst.
   const last = t.steps.at(-1);
@@ -170,7 +189,7 @@ function summary() {
 function statusAsOf(visible) {
   let s = "detected";
   for (const sl of visible) {
-    if (sl.key === "sent" || sl.key === "guard") s = "investigating";
+    if (sl.key === "sent" || sl.key === "guard" || (sl.kind === "agent" && s === "detected")) s = "investigating";
     if (sl.key === "plan" || sl.key === "clone" || sl.key === "checked") s = "testing_fix";
     if (sl.key === "decision") s = sl.d.action === "await_approval" ? "awaiting_approval" : sl.d.action === "reject" ? "fix_rejected" : "testing_fix";
     if (sl.key === "human") s = sl.d.action === "approved" ? "testing_fix" : "fix_rejected";
@@ -188,9 +207,10 @@ function side(visible) {
   const clone = visible.find((s) => s.key === "clone");
   const checked = visible.find((s) => s.key === "checked");
   const verified = visible.find((s) => s.key === "verified");
+  const isPc = machine?.d.role === "pc";
   const company = !machine ? ["off", "Not connected yet"]
     : verified ? (verified.d.clean ? ["clean", "Clean, verified"] : ["infected", "Problems remain"])
-    : keys.has("threat") ? ["infected", state.tier === "low" ? "Unapproved scheduled task" : "Threat running"] : ["clean", "Healthy"];
+    : keys.has("threat") ? ["infected", isPc ? (state.tier === "low" ? "Malicious file in Business folder" : "Unknown sign-in, session live") : state.tier === "low" ? "Unapproved scheduled task" : "Threat running"] : ["clean", "Healthy"];
   const copy = !clone ? ["off", "Not created"] : checked ? ["gone", checked.d.passed ? "Fix passed · copy deleted" : "Fix failed · copy deleted"] : ["testing", "Testing the fix"];
   const ticketShown = keys.has("alert");
   const [label, cls] = STATUS[statusAsOf(visible)] ?? ["—", "s-progress"];
@@ -199,10 +219,10 @@ function side(visible) {
     <section class="card"><h2>The ticket</h2>${ticketShown && inc ? `
       <span class="pill ${cls}">${esc(label)}</span>
       <div class="mini-title">${esc(inc.title)}</div>
-      <div class="mini-meta">Priority: ${sevKnown ? `<span class="p-${inc.severity}">${PRIORITY[inc.severity]}</span>` : "pending"} · Assigned to Batman</div>` : `<p class="empty">No ticket yet.</p>`}
+      <div class="mini-meta">Priority: ${sevKnown ? `<span class="p-${inc.severity}">${PRIORITY[inc.severity]}</span>` : `<span class="p-undeclared">Undeclared</span>`} · Assigned to Batman</div>` : `<p class="empty">No ticket yet.</p>`}
     </section>
     <section class="card"><h2>Machines</h2>
-      <div class="machine ${company[0]}"><div class="m-head">Company machine <span class="m-id">${esc(machine?.d.id ?? "")}</span></div><div class="m-state">${esc(company[1])}</div></div>
+      <div class="machine ${company[0]}"><div class="m-head">${isPc ? "Robin's PC" : "Company machine"} <span class="m-id">${esc(machine?.d.id ?? "")}</span></div><div class="m-state">${esc(company[1])}</div></div>
       <div class="machine ${copy[0]}"><div class="m-head">Test copy <span class="m-id">${esc(clone?.d.id ?? "")}</span></div><div class="m-state">${esc(copy[1])}</div></div>
     </section></div>`;
 }
@@ -280,7 +300,7 @@ async function refresh() {
   if (!state.id) return;
   try {
     const t = await fetch(`/defense/trace/${state.id}`);
-    if (t.ok) state.trace = await t.json();
+    if (t.ok) { const j = await t.json(); if (j) state.trace = j; }
     if (state.trace?.steps.some((s) => s.kind === "alert")) {
       const i = await fetch(`/api/incidents/${state.id}`);
       if (i.ok) state.incident = await i.json();

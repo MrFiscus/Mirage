@@ -1,4 +1,5 @@
 import { detect, signalsFrom } from "./alerts.js";
+import { isPlaybook, runPlaybook } from "./playbooks.js";
 import { applyFix, analystPhone } from "./apply.js";
 import { runCloneCheck } from "./clonecheck.js";
 import { decide } from "./decision.js";
@@ -42,6 +43,8 @@ export async function startScenario(scenario: string, deps: ScenarioDeps = {}, i
 }
 
 async function runScenario(scenario: string, deps: ScenarioDeps, id: string, machines: Sandbox[]): Promise<Incident> {
+  // Demo tiers run on "Robin's PC"; the numbered and virus-* scenarios use the server attack below.
+  if (isPlaybook(scenario)) return runPlaybook(scenario, id, machines);
   const investigator = deps.investigator ?? createInvestigator();
   const planner = deps.planner ?? new ScriptedPlanner();
 
@@ -52,7 +55,7 @@ async function runScenario(scenario: string, deps: ScenarioDeps, id: string, mac
   const unhealthy = baseline.health.filter((c) => !c.passed);
   if (unhealthy.length) throw new Error(`company machine unhealthy before the attack: ${unhealthy.map((c) => `${c.name} (${c.detail ?? "failed"})`).join("; ")}`);
 
-  await timed(id, "threat.started", () => company.runScript(VIRUS_PATH, scenario === "low" ? "low" : ""), () => ({ tier: scenario })); // the simulated attack
+  await timed(id, "threat.started", () => company.runScript(VIRUS_PATH, scenario === "virus-low" ? "low" : ""), () => ({ tier: scenario })); // the simulated attack
   audit("sim.virus", "harmless simulated virus executed on company machine", "simulator");
 
   const telemetry = await timed(id, "queries", () => collectTelemetry(company), (t) => ({ queries: describeQueries(t) }));

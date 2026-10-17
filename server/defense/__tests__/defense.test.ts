@@ -6,6 +6,7 @@ import { RuleInvestigator, clean } from "../investigator.js";
 import { ScriptedPlanner } from "../planner.js";
 import type { Telemetry } from "../telemetry.js";
 import { getIncident, onEvent, smsLog } from "../core.js";
+import { getTrace, runs } from "../run.js";
 import type { ConsoleEvent } from "../contracts.js";
 import { cleanup, startScenario } from "../orchestrator.js";
 import { createCompanyMachine, VIRUS_PATH } from "../sandbox/index.js";
@@ -90,7 +91,7 @@ describe("rules investigator: severity rubric and honest CEO summary", () => {
 });
 
 describe("fix plans are portable", () => {
-  it.each(["1", "2", "3", "low", "high"])("scenario %s uses no `sed -i` (fails on macOS)", async (sc) => {
+  it.each(["1", "2", "3", "virus-low", "virus-high"])("scenario %s uses no `sed -i` (fails on macOS)", async (sc) => {
     for (const cmd of (await new ScriptedPlanner().plan(sc)).commands) expect(cmd).not.toMatch(/sed\s+-i/);
   });
 });
@@ -110,7 +111,7 @@ describe("decision table", () => {
 
 describe("scenarios", () => {
   it("low tier: minor event, rated low, fixed automatically", async () => {
-    const inc = await startScenario("low"); cleanups.push(() => cleanup(inc.id));
+    const inc = await startScenario("virus-low"); cleanups.push(() => cleanup(inc.id));
     const got = getIncident(inc.id)!;
     expect(got.title).toMatch(/scheduled task/);
     expect(got.severity).toBe("low");
@@ -120,7 +121,7 @@ describe("scenarios", () => {
     for (const a of ["query.processes", "query.network", "query.schedule", "query.health", "fix.planned", "voice.briefing_ready"]) expect(actions).toContain(a);
   }, 60_000);
   it("high tier: waits for approval; analyst Reject closes it without touching the machine", async () => {
-    const inc = await startScenario("high"); cleanups.push(() => cleanup(inc.id));
+    const inc = await startScenario("virus-high"); cleanups.push(() => cleanup(inc.id));
     expect(getIncident(inc.id)?.status).toBe("awaiting_approval");
     expect(getIncident(inc.id)?.severity).toBe("high");
     await expect(reject(inc.id, "+15550001001")).rejects.toThrow(/analyst/); // CEO cannot
@@ -152,4 +153,58 @@ describe("scenarios", () => {
     const inc = await startScenario("3"); cleanups.push(() => cleanup(inc.id));
     expect(getIncident(inc.id)?.status).toBe("resolved");
   }, 60_000);
+});
+
+describe("demo playbooks on Robin's PC", () => {
+  const agentSteps = (id: string) => (getTrace(id)?.steps ?? []).filter((s) => s.kind === "agent");
+  it("low tier: finds, hashes and confirms the file, then quarantines it automatically", async () => {
+    const inc = await startScenario("low"); cleanups.push(() => cleanup(inc.id));
+    const got = getIncident(inc.id)!;
+    expect(got.title).toBe("Malicious file download attempt on PC: robin.business@harvard.edu");
+    expect(got.status).toBe("resolved");
+    expect(got.severity).toBe("low");
+    expect(got.proposedFix?.drastic).toBe(false);
+    const steps = agentSteps(inc.id);
+    expect(steps.map((s) => s.data.text).join(" | ")).toMatch(/Found the file at C:\/Business\/.+ObviousVirus\.exe.*SHA-256.*62\/72.*never started/);
+    for (const s of steps) expect(String(s.data.query).length).toBeGreaterThan(5);
+    const company = runs.get(inc.id)!.company;
+    expect((await company.exec("ls pc/quarantine")).stdout).toContain("ObviousVirus.exe.quarantined");
+    expect((await company.exec("find pc/C/Business -iname '*.exe'")).stdout.trim()).toBe("");
+    expect((await company.exec("cat pc/policy/blocked-domains.txt")).stdout).toContain("invoice-portal.example");
+  }, 60_000);
+  it("high tier: verifies new location, impossible travel, clean reputation; waits; only an analyst can lock the account", async () => {
+    const inc = await startScenario("high"); cleanups.push(() => cleanup(inc.id));
+    expect(getIncident(inc.id)!.title).toBe("Login from unknown location for robin.business@harvard.edu");
+    expect(getIncident(inc.id)!.status).toBe("awaiting_approval");
+    expect(getIncident(inc.id)!.severity).toBe("high");
+    const text = agentSteps(inc.id).map((s) => s.data.text).join(" | ");
+    expect(text).toMatch(/Reykjavik.*location is new.*Impossible travel.*reputation: clean.*live session.*Alerted the on-call analyst/);
+    const company = runs.get(inc.id)!.company;
+    expect((await company.exec("cat pc/policy/disabled-accounts.txt")).stdout).toBe("");   // nothing touched before approval
+    await expect(approve(inc.id, "+15550001001")).rejects.toThrow(/analyst/);
+    await approve(inc.id, "+15550001002");
+    expect(getIncident(inc.id)!.status).toBe("resolved");
+    expect((await company.exec("cat pc/policy/disabled-accounts.txt")).stdout).toContain("robin.business@harvard.edu");
+    expect((await company.exec("cat pc/state/sessions.txt")).stdout).not.toContain("user=robin.business");
+    expect((await company.exec("cat pc/state/sessions.txt")).stdout).toContain("maya.ceo");
+  }, 60_000);
+  it("high tier: Reject leaves the account untouched", async () => {
+    const inc = await startScenario("high"); cleanups.push(() => cleanup(inc.id));
+    await reject(inc.id, "+15550001002");
+    expect(getIncident(inc.id)!.status).toBe("fix_rejected");
+    expect((await runs.get(inc.id)!.company.exec("cat pc/state/sessions.txt")).stdout).toContain("203.0.113.77");
+  }, 60_000);
+});
+
+describe("playbook claim guard reads negation", () => {
+  it("accepts denials, rejects assertions", async () => {
+    const { claimChecker } = await import("../playbooks.js");
+    const ran = claimChecker([{ pattern: /\b(ran|executed|launched|opened|was run|infected)\b/i, present: false, what: "the file running" }]);
+    const vpn = claimChecker([{ pattern: /\b(vpn|tor)\b/i, present: false, what: "a VPN or Tor exit" }]);
+    expect(ran("The file was never opened.")).toEqual([]);
+    expect(ran("It was downloaded but not executed.")).toEqual([]);
+    expect(ran("The malicious file was opened by the user.")).toEqual(["the file running"]);
+    expect(vpn("Reputation is clean and the IP is not a VPN or Tor exit.")).toEqual([]);
+    expect(vpn("The sign-in came through a VPN.")).toEqual(["a VPN or Tor exit"]);
+  });
 });

@@ -26,9 +26,16 @@ export async function applyFix(incidentId: string): Promise<void> {
   }
   traceStep(incidentId, "applied", { commands: plan.commands, approvedBy: plan.approvedBy ?? null }, Date.now() - applyStarted);
   const verifyStarted = Date.now();
-  const after = await collectTelemetry(ctx.company);
-  const clean = signalCount(signalsFrom(after)) === 0 && after.health.every((c) => c.passed);
-  traceStep(incidentId, "verified", { clean, health: after.health }, Date.now() - verifyStarted);
+  let clean: boolean, health: { name: string; passed: boolean; detail?: string }[];
+  if (ctx.verify) {
+    health = await ctx.verify(ctx.company);
+    clean = health.every((c) => c.passed);
+  } else {
+    const after = await collectTelemetry(ctx.company);
+    health = after.health;
+    clean = signalCount(signalsFrom(after)) === 0 && after.health.every((c) => c.passed);
+  }
+  traceStep(incidentId, "verified", { clean, health }, Date.now() - verifyStarted);
   audit("fix.verify", clean ? "company machine verified clean" : "verification found remaining issues");
   if (!clean) {
     update(incident, { status: "fix_rejected", technicalSummary: incident.technicalSummary + " Post-fix verification still found issues." });

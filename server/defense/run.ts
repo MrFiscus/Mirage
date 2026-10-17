@@ -3,7 +3,11 @@ import { emit, getIncident, saveIncident } from "./core.js";
 import type { Sandbox } from "./sandbox/index.js";
 
 /** Live state for an incident between "awaiting approval" and "applied". */
-export interface RunContext { company: Sandbox; clone?: Sandbox; plan?: FixPlan; }
+export interface RunContext {
+  company: Sandbox; clone?: Sandbox; plan?: FixPlan;
+  /** Scenario-specific re-check after applying; defaults to the server threat scan. */
+  verify?: (sb: Sandbox) => Promise<{ name: string; passed: boolean; detail?: string }[]>;
+}
 export const runs = new Map<string, RunContext>();
 
 export function audit(action: string, detail: string, actor = "batman") {

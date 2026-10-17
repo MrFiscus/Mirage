@@ -1,0 +1,13 @@
+{
+  "_note": "Synthetic threat intelligence for the Batman demo. Stands in for VirusTotal (file hashes) and ipinfo/AbuseIPDB (IP addresses). All addresses are from documentation ranges.",
+  "files": {
+    "02cadba5ebd5ed473aaa1b0791287bf72680de4cb9fd7108140756ce1ad3a459": { "verdict": "malicious", "detections": "62/72", "label": "Trojan.GenericKD (demo sample)", "firstSeen": "2026-09-30" }
+  },
+  "domains": {
+    "invoice-portal.example": { "age": "registered 3 days ago", "category": "newly registered, unrated" }
+  },
+  "ips": {
+    "198.51.100.24": { "city": "Cambridge, MA, US", "lat": 42.3736, "lon": -71.1097, "asn": "AS64501 Harvard University (example)", "abuseScore": 0, "reports": 0, "vpnOrTor": false },
+    "203.0.113.77": { "city": "Reykjavik, Iceland", "lat": 64.1466, "lon": -21.9426, "asn": "AS64500 ExampleNet Hosting", "abuseScore": 0, "reports": 0, "vpnOrTor": false }
+  }
+}

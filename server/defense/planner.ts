@@ -19,8 +19,8 @@ export class ScriptedPlanner implements FixPlanner {
       case "1": return { commands: CLEAN_COMMANDS, drastic: true };             // needs APPROVE
       case "2": return { commands: [...CLEAN_COMMANDS, "rm -f config.json"], drastic: false }; // harmful, clone check must catch it
       case "3": return { commands: CLEAN_COMMANDS, drastic: false };            // low risk, auto-apply
-      case "low": return { commands: ["rm -f cron/updater.cron"], drastic: false }; // demo low tier: auto-apply
-      case "high": return { commands: CLEAN_COMMANDS, drastic: true };          // demo high tier: needs APPROVE
+      case "virus-low": return { commands: ["rm -f cron/updater.cron"], drastic: false }; // scheduled task only: auto-apply
+      case "virus-high": return { commands: CLEAN_COMMANDS, drastic: true };          // full server attack: needs APPROVE
       default: throw new Error(`unknown scenario: ${scenario}`);
     }
   }
