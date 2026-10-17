@@ -8,6 +8,7 @@ import { MirageEngine } from "./engine.js";
 import { runFleet, runMock } from "./mock.js";
 import { runFleetDaytona } from "./fleet-daytona.js";
 import { DEFAULT_SCOPE, TASK_PROMPT } from "./acme.js";
+import { fleetSize } from "./fleet-size.js";
 
 const LEDGER_FILE = resolve(process.cwd(), "data", "mirage-ledger.jsonl");
 
@@ -36,7 +37,12 @@ mirageRouter.post("/mirage/mock/start", (req, res) => {
 
 // Start a FLEET of scripted agents at once, all watched by the one real watcher (?n=6).
 mirageRouter.post("/mirage/fleet/start", (req, res) => {
-  const n = Number(req.query.n ?? req.body?.n ?? 6);
+  let n: number;
+  try {
+    n = fleetSize(req.query.n ?? req.body?.n ?? 6);
+  } catch (error) {
+    return res.status(400).json({ error: (error as Error).message });
+  }
   const watcherOn = req.query.watcher !== "off" && req.body?.watcher !== "off";
   const real = req.query.backend === "daytona" || req.body?.backend === "daytona";
   if (real) {
@@ -45,7 +51,7 @@ mirageRouter.post("/mirage/fleet/start", (req, res) => {
     void runFleet({ emit: emit as (e: MirageEvent) => void, n, watcherOn })
       .catch((e: Error) => emit({ type: "audit", actor: "mirage", action: "mock.failed", detail: e.message, ts: Date.now() }));
   }
-  res.status(202).json({ started: true, n: Math.max(1, Math.min(10, n)), backend: real ? "daytona" : "sessions" });
+  res.status(202).json({ started: true, n, backend: real ? "daytona" : "sessions" });
 });
 
 mirageRouter.get("/mirage/forensics/:id", (req, res) => {

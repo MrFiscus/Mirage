@@ -9,6 +9,7 @@ import type { MirageEvent, ToolCall } from "../../shared/types.js";
 import { MirageEngine } from "./engine.js";
 import { decide } from "../watcher/index.js";
 import { PressureTracker } from "../watcher/pressure.js";
+import { fleetSize, runStaggeredFleet } from "./fleet-size.js";
 
 // A scripted agent: starts in scope (reads the task, hits the wiki), gets frustrated, then probes out.
 const SCRIPT: Array<Pick<ToolCall, "tool" | "args" | "thought">> = [
@@ -62,15 +63,12 @@ export async function runMock(opts: MockRunOptions): Promise<MirageEngine> {
 /** Run N scripted agents at once through the SAME real watcher, each tagged by its own session id.
  *  Staggered start + jittered pace so the fleet looks alive. Honest framing: one watcher, many agents. */
 export async function runFleet(opts: { emit: (e: MirageEvent) => void; n?: number; watcherOn?: boolean }): Promise<void> {
-  const n = Math.max(1, Math.min(10, opts.n ?? 6));
-  const runs: Promise<unknown>[] = [];
-  for (let i = 0; i < n; i++) {
+  const n = fleetSize(opts.n ?? 6);
+  await runStaggeredFleet(n, async (i) => {
     const id = `AGENT-${String(i + 1).padStart(2, "0")}`;
     const stepMs = 700 + Math.round(Math.random() * 900); // 0.7-1.6s, varied
-    const start = new Promise<void>((r) => setTimeout(r, i * 350 + Math.random() * 400));
-    runs.push(start.then(() => runMock({ emit: opts.emit, watcherOn: opts.watcherOn ?? true, stepMs, ledgerFile: null, id })
-      .catch((e: Error) => opts.emit({ type: "audit", actor: "mirage", action: "mock.failed", detail: `${id}: ${e.message}`, ts: Date.now() }))));
-  }
-  await Promise.all(runs);
+    await runMock({ emit: opts.emit, watcherOn: opts.watcherOn ?? true, stepMs, ledgerFile: null, id })
+      .catch((e: Error) => opts.emit({ type: "audit", actor: "mirage", action: "mock.failed", detail: `${id}: ${e.message}`, ts: Date.now() }));
+  }, 350);
   opts.emit({ type: "audit", actor: "mirage", action: "fleet.complete", detail: `${n} agents watched`, ts: Date.now() });
 }
