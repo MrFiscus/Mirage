@@ -91,7 +91,10 @@ function describe(e) {
       return { who: "droid", text: `Fix plan ready: ${m[1] ?? "?"} step${m[1] === "1" ? "" : "s"}, ${m[2] ?? "?"} change`, sub: "Scripted plan standing in for Factory Droid (placeholder)" };
     }
     case "clone.created": return { who: "daytona", text: "Made a copy of the machine to test the fix safely" };
-    case "clone.checked": return { who: "daytona", kind: "clone" };
+    case "clone.checked": {
+      const left = /still present: (.*?)(; failed:|$)/.exec(d)?.[1];
+      return { who: "daytona", kind: "clone", sub: left ? `Still on the copy after the fix: ${left}` : undefined };
+    }
     case "decision": {
       if (d.startsWith("apply")) return { who: "batman", text: "Low risk and the test passed, so Batman is fixing it on its own" };
       if (d.startsWith("await_approval")) return { who: "batman", text: "This fix makes major changes, so Batman is asking an analyst to approve it" };

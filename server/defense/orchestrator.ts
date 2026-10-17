@@ -53,7 +53,7 @@ export async function startScenario(scenario: string, deps: ScenarioDeps = {}, i
   audit("clone.created", `clone ${clone.id} created`);
   const report = await runCloneCheck(clone, plan.commands);
   const failedBefore = report.before.filter((c) => !c.passed).map((c) => c.name);
-  audit("clone.checked", `before fix failing: [${failedBefore.join(", ")}]; after fix passed=${report.cloneCheck.passed}`);
+  audit("clone.checked", `before fix failing: [${failedBefore.join(", ")}]; after fix passed=${report.cloneCheck.passed}${report.remaining.length ? `; still present: ${report.remaining.join(" | ")}` : ""}${report.commandFailures.length ? `; failed: ${report.commandFailures.join(" | ")}` : ""}`);
   const checked = { ...plan, cloneCheck: report.cloneCheck };
   update(incident, { proposedFix: checked });
   await clone.destroy();

@@ -4,3 +4,4 @@ node_modules/
 data/runtime-state.json
 .DS_Store
 *.log
+!sim/app/logs/network.log
