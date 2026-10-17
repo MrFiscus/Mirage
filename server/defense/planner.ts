@@ -6,7 +6,8 @@ const CLEAN_COMMANDS = [
   'kill "$(cat .run/rogue.pid)"',
   "rm -f .run/rogue.pid",
   "cp .baseline/lib.cjs lib.cjs",
-  "sed -i '/10.0.0.99/d' logs/network.log",
+  // Portable on GNU and BSD/macOS (no sed -i); grep -v exits 1 when nothing is left, hence || true.
+  "{ grep -v '10.0.0.99' logs/network.log || true; } > logs/network.log.tmp && mv logs/network.log.tmp logs/network.log",
   "rm -f cron/beacon.cron",
 ];
 

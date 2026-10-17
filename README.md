@@ -69,6 +69,8 @@ The local `.env` fields `PHOTON_SIP_ADDRESS`, `PHOTON_SIP_USERNAME`, `PHOTON_SIP
 
 ## Factory Droid integration point
 
-The defense lane should call Factory Droid from the `proposedFix` stage, run its commands against a Daytona clone, and populate `FixPlan.cloneCheck`. The core console already renders those checks and exposes the approval state. A fix must not be applied to the company sandbox until clone checks pass and a human approval event has been recorded.
+Batman's fix step is a `FixPlanner` (`server/defense/planner.ts`): given an incident, it returns a `FixPlan` (the commands to run and whether the change is drastic). This is where Factory Droid plugs in. **In this build the planner is scripted, not Droid:** we did not have a Factory key during the hackathon, so a fixed plan stands in and the demo labels it "Droid placeholder".
+
+What does run for real is everything around the planner, and it applies to any plan, scripted or Droid. Every plan is first run on a Daytona clone of the company machine, with health checks before and after (app starts, tests pass, key files intact, no threat indicators remain). The decision rule (`server/defense/decision.ts`) then rejects any plan that fails those checks, and holds any drastic plan for an analyst's approval. Only then is the plan applied to the company machine, which is re-checked afterwards. Scenario 2 (`npm run scenario 2`) shows a harmful plan, one that deletes the app's config, being caught on the clone and rejected without touching the real machine. Swapping in Droid means implementing `FixPlanner` with the Droid SDK; the clone check and approval gate stay the same.
 
 No real malware, customer data, or production systems are used by this demo.

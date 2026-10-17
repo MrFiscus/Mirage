@@ -144,7 +144,7 @@ Done, tested, on `main`:
 - Loop: simulated virus, alert, read-only queries, investigator (Gemini or rules), scripted fix plan, test on a clone with health checks before/after, decision rule, approve/reject, apply, verify clean.
 - Engine uses the real core (`server/core`) through `server/defense/core.ts`; `mountDefense()` in `server/index.ts` mounts routes and `/demo`.
 - Routes: `POST /defense/scenario/:id/start` (returns at once; progress arrives as ConsoleEvents), `POST /defense/approve` `{incidentId, phone}`, `POST /defense/demo-approve/:id`, `POST /defense/demo-reject/:id`, `GET /defense/info`.
-- Tests: `npm test` (24): engine, both sandbox backends, Gemini failure modes with mocked network, and voice tools reading real defense incidents (role views, refusals, lockout).
+- Tests: `npm test` (36): engine, weighted severity table, fix-plan portability, both sandbox backends, Gemini failure modes with mocked network, and voice tools reading real defense incidents (role views, refusals, lockout).
 
 Config (`.env`, gitignored; names in `.env.example`):
 - `SANDBOX_BACKEND=daytona` + `DAYTONA_API_KEY`. Default is local. **On Windows use Daytona**: the local sandbox needs Linux tools (`sh`, `ps`, `grep`).
@@ -153,11 +153,15 @@ Config (`.env`, gitignored; names in `.env.example`):
 
 Findings:
 - Daytona native fork is not available on our account. The clone is a second sandbox that replays the first one's files and running program. Create is about 1.5 s; a full run is about 8 to 15 s.
+- Rules investigator severity is weighted, not counted: outbound to an unknown address 3, running unknown program 2, changed key files 2, unapproved scheduled task 1; score 4+ high, 2+ medium. Program plus beacon now rates high; a lone scheduled task stays low.
+- The CEO summary from the rules investigator is built from what was actually found (a scheduled-task-only alert no longer mentions a program or an address).
+- Fix commands avoid `sed -i` (it fails on macOS); the network-log cleanup uses `grep -v … > tmp && mv`.
 - Gemini output is checked in code: schema-constrained, may only cite real telemetry lines by number, falls back to rules on bad JSON, rate limits, or any "breach"/"data stolen" wording. Told not to infer a program's purpose from its name.
 
 Open:
-- Droid: needs a Factory key; otherwise keep the scripted plan (cut order allows it).
-- Photon: the defense engine's `sendSms` in `server/defense/core.ts` is still a stub (log + `sms.sent`). No inbound APPROVE text yet; the demo uses on-screen buttons.
+- Droid: no Factory key, so the scripted plan stays (cut order allows it). README "Factory Droid integration point" says so plainly; do not claim Droid does real work.
+- Eval: waiting on Person 3 to push the eval harness (severity accuracy, `EVAL_INVESTIGATOR`). Then rerun `npm run eval` with rules and with `EVAL_INVESTIGATOR=gemini` for the Devpost numbers.
+- Photon: waiting on Person 3 to expose the real sender in the core; `server/defense/core.ts` `sendSms` is the single swap point and is still a stub (log + `sms.sent`). No inbound APPROVE text yet; the demo uses on-screen buttons.
 - Windows runs: one machine-health bug (backslash paths) is fixed. A second report (fix failing on the clone on Windows) is not yet diagnosed; the clone check now names which indicator remains.
 
 ### Person 3: Core, console, data, evals, submission

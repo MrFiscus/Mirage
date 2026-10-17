@@ -3,6 +3,8 @@ import { signalsFrom } from "../alerts.js";
 import { approve, reject } from "../approval.js";
 import { decide } from "../decision.js";
 import { RuleInvestigator, clean } from "../investigator.js";
+import { ScriptedPlanner } from "../planner.js";
+import type { Telemetry } from "../telemetry.js";
 import { getIncident, onEvent, smsLog } from "../core.js";
 import type { ConsoleEvent } from "../contracts.js";
 import { cleanup, startScenario } from "../orchestrator.js";
@@ -57,6 +59,37 @@ describe("investigator", () => {
   it("benign telemetry raises no signals", () => {
     const s = signalsFrom({ processes: [], outbound: ["x OUTBOUND tcp 10.0.0.5:443 ok"], cron: [], health: [{ name: "key files intact", passed: true }] });
     expect(s.unknownOutbound).toEqual([]);
+  });
+});
+
+describe("rules investigator: weighted severity and honest CEO summary", () => {
+  const ok = { name: "key files intact", passed: true };
+  const bad = { name: "key files intact", passed: false, detail: "changed: lib.cjs" };
+  const T = (o: Partial<Telemetry>): Telemetry => ({ processes: [], outbound: [], cron: [], health: [ok], ...o });
+  const proc = ["12 node rogue-miner-x"], beacon = ["x OUTBOUND tcp 10.0.0.99:4444 beacon"], cron = ["updater.cron"];
+  it.each([
+    ["scheduled task only", T({ cron }), "low"],
+    ["beacon only", T({ outbound: beacon }), "medium"],
+    ["running program only", T({ processes: proc }), "medium"],
+    ["program + beacon", T({ processes: proc, outbound: beacon }), "high"],
+    ["full attack", T({ processes: proc, outbound: beacon, cron, health: [bad] }), "high"],
+  ])("%s -> %s", async (_n, t, sev) => {
+    expect((await new RuleInvestigator().investigate(t)).severity).toBe(sev);
+  });
+  it("scheduled-task-only summary does not claim a program or an outside address", async () => {
+    const inv = await new RuleInvestigator().investigate(T({ cron }));
+    expect(inv.businessSummary).toMatch(/scheduled task/);
+    expect(inv.businessSummary).not.toMatch(/program|address|contact|connect/i);
+  });
+  it("full-attack summary names every finding", async () => {
+    const inv = await new RuleInvestigator().investigate(T({ processes: proc, outbound: beacon, cron, health: [bad] }));
+    for (const w of [/program/, /outside address/, /scheduled task/, /file was changed/]) expect(inv.businessSummary).toMatch(w);
+  });
+});
+
+describe("fix plans are portable", () => {
+  it.each(["1", "2", "3", "low", "high"])("scenario %s uses no `sed -i` (fails on macOS)", async (sc) => {
+    for (const cmd of (await new ScriptedPlanner().plan(sc)).commands) expect(cmd).not.toMatch(/sed\s+-i/);
   });
 });
 

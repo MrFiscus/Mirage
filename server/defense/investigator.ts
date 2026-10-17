@@ -33,16 +33,42 @@ export function buildEvidence(t: Telemetry): Evidence {
   return { evidence, findings, indicators: signalCount(s) };
 }
 
+/** Weighted so a running program that beacons out rates high, while a lone scheduled task stays low. */
+export const SIGNAL_WEIGHTS = { unknownOutbound: 3, rogueProcess: 2, integrityFailed: 2, cronPersistence: 1 } as const;
+
+export function weightedScore(t: Telemetry): number {
+  const s = signalsFrom(t);
+  return (s.unknownOutbound.length ? SIGNAL_WEIGHTS.unknownOutbound : 0)
+    + (s.rogueProcess ? SIGNAL_WEIGHTS.rogueProcess : 0)
+    + (s.integrityFailed ? SIGNAL_WEIGHTS.integrityFailed : 0)
+    + (s.cronPersistence ? SIGNAL_WEIGHTS.cronPersistence : 0);
+}
+
+/** CEO-level sentence built only from what was actually found. */
+export function plainFindings(t: Telemetry): string {
+  const s = signalsFrom(t);
+  const parts = [
+    ...(s.rogueProcess ? ["an unknown program was running"] : []),
+    ...(s.unknownOutbound.length ? ["it tried to contact an outside address IT doesn't recognise"] : []),
+    ...(s.cronPersistence ? ["a scheduled task IT didn't approve was added"] : []),
+    ...(s.integrityFailed ? ["an application file was changed"] : []),
+  ];
+  if (!parts.length) return "Nothing unusual was found on the machine.";
+  const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+  return `On one company machine, ${list}.`;
+}
+
 /** Deterministic rule-based investigator. Also the fallback whenever the model call fails or misbehaves. */
 export class RuleInvestigator implements Investigator {
   async investigate(t: Telemetry): Promise<Investigation> {
     const { evidence, findings, indicators: n } = buildEvidence(t);
-    const severity: Incident["severity"] = n >= 3 ? "high" : n === 2 ? "medium" : "low";
-    const confidence = Math.min(0.97, Number((0.4 + 0.15 * n).toFixed(2)));
+    const score = weightedScore(t);
+    const severity: Incident["severity"] = score >= 4 ? "high" : score >= 2 ? "medium" : "low";
+    const confidence = Math.min(0.97, Number((0.45 + 0.07 * score).toFixed(2)));
     return {
       engine: "rules", severity, confidence, evidence,
-      technicalSummary: `${n} of 4 indicators present (process, outbound, cron persistence, file integrity). Findings: ${findings.join("; ")}. Evidence is cited below. Data loss has not been confirmed by any query.`,
-      businessSummary: `One company machine ran an unauthorised program that tried to contact an unknown address. We have not confirmed any data loss. Batman is testing a fix on a copy of the machine first; nothing on the live system changes until that test passes.`,
+      technicalSummary: `${n} of 4 indicators present (process, outbound, cron persistence, file integrity); weighted score ${score} of 8. Findings: ${findings.join("; ")}. Evidence is cited below. Data loss has not been confirmed by any query.`,
+      businessSummary: `${plainFindings(t)} We have not confirmed any data loss. Batman is testing a fix on a copy of the machine first; nothing on the live system changes until that test passes.`,
     };
   }
 }
