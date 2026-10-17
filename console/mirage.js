@@ -1,4 +1,6 @@
 // The console renders host-side Mirage events. Launching is always an explicit action.
+import { FLEET_MODES, modeById, modeSplit, launchPath, attackerBadge, cohortSummary } from './fleet-mode.js';
+
 const $ = (selector) => document.querySelector(selector);
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[c]));
 const icon = (name) => {
@@ -18,7 +20,7 @@ const verdictName = { pass: 'Passed', mirage: 'Redirected', block: 'Blocked' };
 const pad = (number) => String(number).padStart(2, '0');
 const PAGE_SIZE = 24;
 const state = {
-  view: 'setup', phase: 'idle', connected: false, count: 6,
+  view: 'setup', phase: 'idle', connected: false, count: 6, mode: 'live',
   boxes: new Map(), pending: new Map(), seen: new Set(), feed: [], failures: [],
   focus: null, filter: 'all', page: 0, startedAt: null, endedAt: null,
 };
@@ -37,14 +39,19 @@ $('#app').innerHTML = `
     <section class="setup page" id="setup" aria-labelledby="setup-title">
       <div class="setup-heading">
         <h1 id="setup-title" tabindex="-1">A small world.<br><span>Under your control.</span></h1>
-        <p class="setup-description">Run scripted agents in isolated Daytona sandboxes, each with an impossible task. The watcher checks every tool call, then lets it through, redirects it into the mirage, or blocks it.</p>
+        <p class="setup-description">Run agents in isolated Daytona VMs, each on a job it cannot finish in scope. The watcher checks every tool call, then lets it through, redirects it into the mirage, or blocks it.</p>
       </div>
       <div class="fleet-configurator">
         <div class="fleet-preview">
           <div id="fleet-diagram" class="fleet-diagram" aria-hidden="true"></div>
-          <div class="preview-caption"><span id="preview-count">6 isolated VMs</span><span class="preview-watcher">One watcher.</span></div>
+          <div class="preview-caption"><span id="preview-count">6 isolated VMs</span><span class="preview-split" id="preview-split"></span><span class="preview-watcher">One watcher.</span></div>
         </div>
         <div class="setup-controls">
+          <fieldset class="mode-picker">
+            <legend class="count-label">What runs in each VM?</legend>
+            <div class="modes">${FLEET_MODES.map(mode => `<label class="mode-option"><input type="radio" name="mode" value="${mode.id}" aria-describedby="mode-detail" ${mode.id === state.mode ? 'checked' : ''} /><span class="mode-name">${esc(mode.name)}</span><span class="mode-split">${esc(mode.split)}</span></label>`).join('')}</div>
+            <p class="control-description mode-detail" id="mode-detail" aria-live="polite"></p>
+          </fieldset>
           <label class="count-label" for="n">How many agents?</label>
           <p class="control-description" id="count-hint">One agent per virtual machine.</p>
           <div class="count-control">
@@ -60,7 +67,7 @@ $('#app').innerHTML = `
 
     <section class="workspace page" id="workspace" aria-labelledby="workspace-title" hidden>
       <div class="workspace-heading">
-        <h1 id="workspace-title" tabindex="-1">Fleet</h1>
+        <div class="workspace-title-group"><h1 id="workspace-title" tabindex="-1">Fleet</h1><span class="agent-badge" id="detail-badge" hidden></span></div>
         <div class="workspace-actions"><span class="run-clock" id="run-clock">00:00 elapsed</span><button class="button secondary" id="new-run" type="button" disabled>New experiment ${icon('expand')}</button><button class="button secondary" id="back" type="button" hidden>${icon('back')} All environments</button></div>
       </div>
       <div class="metrics" id="metrics">
@@ -70,6 +77,7 @@ $('#app').innerHTML = `
         <div class="metric"><span class="metric-label"><i class="legend-dot block"></i> Blocked</span><strong id="s-block">00</strong></div>
         <div class="run-indicator"><span class="status-pill" id="run-status">Preparing</span><span id="run-status-note" hidden></span></div>
       </div>
+      <div class="cohorts" id="cohorts" role="status" aria-label="Results by agent type" hidden></div>
 
       <div class="monitor-layout" id="monitor">
         <section class="fleet-region" aria-labelledby="fleet-heading">
@@ -104,14 +112,33 @@ setTheme('light');
 
 function renderFleetPreview(count) {
   // An abstract view of the topology; large selections share a bounded set of representative nodes.
+  // Scripted (simulated) VMs are drawn dashed so the split is visible before launch.
   const shown = Math.min(count, 12);
+  const split = modeSplit(state.mode, count);
   const nodes = Array.from({ length: shown }, (_, index) => {
     const angle = index * Math.PI * 2 / shown - Math.PI / 2;
-    return { x: 280 + Math.cos(angle) * 174, y: 166 + Math.sin(angle) * 118 };
+    // half & half launches the two kinds interleaved, so the preview alternates them too
+    const simulated = split.live === 0 || (split.simulated > 0 && index % 2 === 1);
+    return { x: 280 + Math.cos(angle) * 174, y: 166 + Math.sin(angle) * 118, simulated };
   });
-  $('#fleet-diagram').innerHTML = `<svg viewBox="0 0 560 332" fill="none" aria-hidden="true"><ellipse cx="280" cy="166" rx="174" ry="118" class="preview-orbit"/>${nodes.map(node => `<path d="M280 166 ${node.x} ${node.y}" class="preview-wire"/>`).join('')}<circle cx="280" cy="166" r="57" class="watcher-halo"/><circle cx="280" cy="166" r="43" class="watcher-core"/><circle cx="280" cy="158" r="10" class="watcher-mark"/><text x="280" y="186" text-anchor="middle" class="watcher-label">Watcher</text>${nodes.map(node => `<g transform="translate(${node.x - 23} ${node.y - 19})"><rect width="46" height="38" rx="9" class="preview-agent"/><rect x="13" y="10" width="20" height="13" rx="2" class="preview-screen"/><path d="M19 28h8m-4-5v5" class="preview-screen"/></g>`).join('')}</svg>`;
+  $('#fleet-diagram').innerHTML = `<svg viewBox="0 0 560 332" fill="none" aria-hidden="true"><ellipse cx="280" cy="166" rx="174" ry="118" class="preview-orbit"/>${nodes.map(node => `<path d="M280 166 ${node.x} ${node.y}" class="preview-wire"/>`).join('')}<circle cx="280" cy="166" r="57" class="watcher-halo"/><circle cx="280" cy="166" r="43" class="watcher-core"/><circle cx="280" cy="158" r="10" class="watcher-mark"/><text x="280" y="186" text-anchor="middle" class="watcher-label">Watcher</text>${nodes.map(node => `<g transform="translate(${node.x - 23} ${node.y - 19})"><rect width="46" height="38" rx="9" class="preview-agent${node.simulated ? ' simulated' : ''}"/><rect x="13" y="10" width="20" height="13" rx="2" class="preview-screen"/><path d="M19 28h8m-4-5v5" class="preview-screen"/></g>`).join('')}</svg>`;
   $('#preview-count').textContent = `${count.toLocaleString()} isolated VM${count === 1 ? '' : 's'}`;
+  $('#preview-split').innerHTML = [
+    split.live ? `<span><i class="swatch live"></i>${split.live.toLocaleString()} live Droid</span>` : '',
+    split.simulated ? `<span><i class="swatch simulated"></i>${split.simulated.toLocaleString()} scripted</span>` : '',
+  ].join('');
 }
+
+function updateMode(id) {
+  const mode = modeById(id);
+  if (!mode) return;
+  state.mode = mode.id;
+  document.querySelectorAll('input[name="mode"]').forEach(input => { input.checked = input.value === mode.id; });
+  $('#mode-detail').textContent = mode.detail;
+  renderFleetPreview(state.count);
+}
+document.querySelectorAll('input[name="mode"]').forEach(input => { input.onchange = () => updateMode(input.value); });
+updateMode(state.mode);
 
 function updateCount(value) {
   const count = Number(value);
@@ -148,6 +175,7 @@ function switchView(view) {
   $('#monitor').hidden = view !== 'fleet';
   $('#detail').hidden = view !== 'detail';
   $('#back').hidden = view !== 'detail';
+  $('#detail-badge').hidden = view !== 'detail';
   $('#new-run').hidden = view === 'detail';
   document.body.dataset.view = view;
   setTheme(view === 'fleet' ? 'dark' : 'light');
@@ -175,7 +203,8 @@ function statusOf(box) {
 }
 function getBox(id) {
   if (state.boxes.has(id)) return state.boxes.get(id);
-  const box = { id, label: `VM-${pad(state.boxes.size + 1)}`, actions: [], moves: 0, mirage: 0, block: 0, stopped: false };
+  // attacker is filled from session.started (session.attacker) and is the only source for the tile's badge
+  const box = { id, label: `VM-${pad(state.boxes.size + 1)}`, attacker: undefined, actions: [], moves: 0, mirage: 0, block: 0, stopped: false };
   state.boxes.set(id, box);
   return box;
 }
@@ -190,7 +219,8 @@ function renderFleet() {
   const visible = filtered.slice(begin, end);
   $('#fleet').innerHTML = visible.map(box => {
     const status = statusOf(box);
-    return `<button class="vm ${box.mirage ? 'has-mirage' : ''} ${box.block ? 'has-block' : ''}" type="button" data-session="${esc(box.id)}" aria-label="Inspect ${box.label}"><span class="vm-head"><span class="vm-identity"><span class="vm-icon">${icon('machine')}</span><span><b>${box.label}</b></span></span><span class="agent-status ${status.kind}"><i></i>${status.text}</span></span><span class="vm-term">${box.actions.length ? box.actions.slice(-3).map(action => `<span class="command-row"><span class="command-step">${pad(action.step)}</span><span class="command-symbol ${action.decision}">${action.decision === 'pass' ? '↳' : action.decision === 'mirage' ? '↪' : '×'}</span><code title="${esc(action.cmd)}">${esc(action.cmd)}</code></span>`).join('') : '<span class="card-waiting">Waiting for activity.</span>'}</span><span class="vm-foot"><span>${box.moves} call${box.moves === 1 ? '' : 's'}${box.mirage ? ` <i>·</i> ${box.mirage} redirected` : ''}</span><span class="inspect-link">Inspect ${icon('expand')}</span></span></button>`;
+    const badge = attackerBadge(box.attacker);
+    return `<button class="vm ${box.mirage ? 'has-mirage' : ''} ${box.block ? 'has-block' : ''}" type="button" data-session="${esc(box.id)}" aria-label="Inspect ${box.label}, ${esc(badge.text)}"><span class="vm-head"><span class="vm-identity"><span class="vm-icon">${icon('machine')}</span><span><b>${box.label}</b><span class="agent-badge ${badge.kind}">${esc(badge.text)}</span></span></span><span class="agent-status ${status.kind}"><i></i>${status.text}</span></span><span class="vm-term">${box.actions.length ? box.actions.slice(-3).map(action => `<span class="command-row"><span class="command-step">${pad(action.step)}</span><span class="command-symbol ${action.decision}">${action.decision === 'pass' ? '↳' : action.decision === 'mirage' ? '↪' : '×'}</span><code title="${esc(action.cmd)}">${esc(action.cmd)}</code></span>`).join('') : '<span class="card-waiting">Waiting for activity.</span>'}</span><span class="vm-foot"><span>${box.moves} call${box.moves === 1 ? '' : 's'}${box.mirage ? ` <i>·</i> ${box.mirage} redirected` : ''}</span><span class="inspect-link">Inspect ${icon('expand')}</span></span></button>`;
   }).join('');
   if (state.filter === 'all') {
     for (let i = Math.max(begin, all.length); i < end; i++) {
@@ -234,6 +264,10 @@ function renderStats() {
   $('#s-moves').textContent = pad(sum('moves'));
   $('#s-mirage').textContent = pad(sum('mirage'));
   $('#s-block').textContent = pad(sum('block'));
+  // Live and simulated results are always reported side by side, never pooled into one rate.
+  const cohorts = cohortSummary([...state.boxes.values()]);
+  $('#cohorts').hidden = state.view !== 'fleet' || cohorts.length === 0;
+  $('#cohorts').innerHTML = cohorts.map(cohort => `<div class="cohort"><span class="agent-badge ${cohort.kind}">${esc(cohort.label)}</span><span class="cohort-text"><strong>${esc(cohort.text)}</strong>${cohort.kind === 'simulated' ? '<span>Planned by script, not an agent decision.</span>' : cohort.kind === 'live' ? '<span>Unscripted: each agent chose its own calls.</span>' : ''}</span></div>`).join('');
   const complete = state.phase === 'complete';
   const status = focused ? statusOf(focused) : null;
   $('#run-status').textContent = status?.text ?? (complete ? 'Run complete' : state.boxes.size ? 'Observing' : 'Provisioning');
@@ -258,6 +292,9 @@ function openDetail(id) {
   state.focus = id;
   switchView('detail');
   $('#workspace-title').textContent = `${box.label}.`;
+  const badge = attackerBadge(box.attacker);
+  $('#detail-badge').className = `agent-badge ${badge.kind}`;
+  $('#detail-badge').textContent = badge.text;
   renderDetail(box, true);
   $('#workspace-title').focus({ preventScroll: true });
   window.scrollTo({ top: 0, behavior: 'instant' });
@@ -310,12 +347,16 @@ async function start() {
   switchView('fleet'); renderFleet(); updateClock();
   $('#workspace-title').focus({ preventScroll: true });
   try {
-    const response = await fetch(`/cage/fleet/start?live=${state.count}`, { method: 'POST' }); // live Droid agents, no scripts
-    if (!response.ok) throw new Error(`The server returned ${response.status}.`);
-  } catch {
+    // The chosen mode decides what runs; the server refuses live modes without a Factory key instead of substituting scripts.
+    const response = await fetch(launchPath(state.mode, state.count), { method: 'POST' });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(typeof body.error === 'string' ? body.error : `The server returned ${response.status}.`);
+    }
+  } catch (error) {
     state.phase = 'error'; state.endedAt = Date.now();
     switchView('setup');
-    $('#setup-error').textContent = 'The run could not be started. Check the server connection and try again.';
+    $('#setup-error').textContent = error instanceof TypeError ? 'The run could not be started. Check the server connection and try again.' : `The run could not be started. ${error.message}`;
     $('#setup-error').hidden = false;
     $('#launch').focus({ preventScroll: true });
   }
@@ -330,7 +371,8 @@ $('#new-run').onclick = () => {
 function handle(event) {
   if (state.view === 'setup') return;
   if (event.type === 'session.started') {
-    getBox(event.session.id); state.phase = state.phase === 'complete' ? 'complete' : 'running'; renderFleet(); renderStats();
+    getBox(event.session.id).attacker = event.session.attacker;
+    state.phase = state.phase === 'complete' ? 'complete' : 'running'; renderFleet(); renderStats();
   } else if (event.type === 'tool.call') {
     state.pending.set(event.call.id, event.call);
   } else if (event.type === 'watcher.verdict') {
@@ -342,7 +384,7 @@ function handle(event) {
     box.actions.push(action); box.moves++;
     if (action.decision === 'mirage') box.mirage++;
     if (action.decision === 'block') box.block++;
-    addFeed({ kind: action.decision, tag: verdictName[action.decision], label: box.label, detail: action.cmd, ts: call.ts });
+    addFeed({ kind: action.decision, tag: verdictName[action.decision], label: `${box.label} · ${attackerBadge(box.attacker).text}`, detail: action.cmd, ts: call.ts });
     renderFleet(); renderStats();
     if (state.view === 'detail' && state.focus === box.id) renderDetail(box);
   } else if (event.type === 'kill') {
@@ -352,6 +394,8 @@ function handle(event) {
     state.failures.push(event.detail);
     addFeed({ kind: 'block', tag: 'Environment error', label: event.action === 'fleet.failed' ? 'Fleet' : 'Daytona', detail: event.detail });
     if (event.action === 'fleet.failed') finish();
+  } else if (event.type === 'audit' && event.action === 'fleet.budget') {
+    addFeed({ kind: 'neutral', tag: 'Token budget', label: 'Fleet', detail: event.detail });
   } else if (event.type === 'audit' && event.action === 'fleet.complete') finish();
 }
 function finish() {

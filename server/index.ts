@@ -16,7 +16,8 @@ import { CageBus } from "./cage/events.js";
 import { runSession } from "./cage/harness.js";
 import { ScriptedAttacker, ACME_SCRIPT } from "./cage/attackers/scripted.js";
 import { makeRealMirage, NullSandbox, realWatcher } from "./cage/wire.js";
-import { membersFromCounts, membersFromMix, runCageFleet } from "./cage/fleet.js";
+import { runCageFleet } from "./cage/fleet.js";
+import { planFleet } from "./cage/fleet-plan.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -67,42 +68,26 @@ app.post("/cage/start", (request, response) => {
   return response.status(202).json({ started: true, watcherOn });
 });
 
-// Cage fleet (Person A, System 3): N agents at once, a Droid + scripted MIX in the real "vm" world, all watched by
-// the one real watcher. Emits the same events the fleet UI already renders. ?droid=2&scripted=1&watcher=off. Droid
-// members fall back to scripted when FACTORY_API_KEY is absent (noted in the feed). Reconciles with the all-scripted
-// /mirage/fleet/start (Person C) — both compose runSession; this is the Droid/vm variant.
+// Cage fleet (Person A, System 3): N agents, each in its own real "vm" world, all watched by the one real watcher.
+// Emits the same events the fleet UI already renders. The dashboard sends ?mode=live|mixed|scripted&n=N; the older
+// ?live=N, ?real=&rogue= and ?droid=&scripted= forms still work (parsing + guards in cage/fleet-plan.ts). Reconciles
+// with the all-scripted /mirage/fleet/start (Person C) — both compose runSession; this is the Droid/vm variant.
 app.post("/cage/fleet/start", (request, response) => {
   const watcherOn = request.query.watcher !== "off";
-  const list = (v: unknown) => String(v ?? "").split(",").map((x) => x.trim()).filter(Boolean);
   // How many agents run AT ONCE (the Daytona concurrent-VM limit). The TOTAL is not capped: extra agents queue and each
   // gets a fresh VM after an earlier one is destroyed. Independent of the watcher and of whatever the UI asks for.
   const ceiling = Math.max(1, Number(process.env.CAGE_MAX_VMS) || 10);
   const concurrency = Math.min(ceiling, Math.max(1, Math.floor(Number(request.query.concurrency)) || ceiling));
-  let members;
-  if (request.query.live !== undefined) {
-    // Dashboard mode: ?live=N -> N LIVE Droid agents (no scripts) on the impossible flag hunt. Each decides for itself;
-    // whether any crosses scope is whatever it actually does. No key = refuse, never quietly fall back to scripts.
-    if (!process.env.FACTORY_API_KEY) return response.status(503).json({ error: "FACTORY_API_KEY is not set; live Droid agents cannot start." });
-    const asked = Math.floor(Number(request.query.live));
-    if (!Number.isFinite(asked) || asked < 1) return response.status(400).json({ error: "live must be a positive whole number" });
-    // A big fleet through this route shares the server's event bus with the analyst notifier, which fires once per
-    // tripped SESSION. With live texts/calls on, N tripped agents could mean N real messages to the on-call phone.
-    // Large runs belong on the CLI (`npm run cage:fleet -- --agents N`), which never touches the notifier.
-    const notifierLive = process.env.PHOTON_MODE === "live" || process.env.VOICE_MODE === "live";
-    if (asked > 25 && notifierLive) return response.status(409).json({ error: `Refusing ${asked} agents through the server while PHOTON_MODE/VOICE_MODE is live (one analyst alert per tripped agent). Run it with the CLI, or set both to mock.` });
-    members = membersFromMix(Array.from({ length: asked }, () => "eval-rerun"), []);
-  } else {
-    // Mixed fleet: ?real=orders-report,billing-sync (live Droid, unscripted) &rogue=billing-sync,hotfix-deploy (SIMULATED
-    // scripted rogues). Without those, falls back to the counts form ?droid=2&scripted=1.
-    const real = list(request.query.real);
-    const rogue = list(request.query.rogue);
-    members = real.length || rogue.length
-      ? membersFromMix(real, rogue)
-      : membersFromCounts(Number(request.query.droid ?? 2), Number(request.query.scripted ?? 1), "vm");
-  }
-  void runCageFleet({ members, emit: publish, watcherOn, concurrency })
+  const plan = planFleet(request.query, process.env);
+  if (!plan.ok) return response.status(plan.status).json({ error: plan.error });
+  const { members } = plan;
+  // Spend stop for big UI runs (~60k tokens per live Droid): ?tokenBudget=T, else CAGE_TOKEN_BUDGET, else none.
+  // Once reached, no NEW agents start (running ones finish), and fleet.budget is emitted.
+  const budget = Number(request.query.tokenBudget ?? process.env.CAGE_TOKEN_BUDGET);
+  const tokenBudget = Number.isFinite(budget) && budget > 0 ? budget : undefined;
+  void runCageFleet({ members, emit: publish, watcherOn, concurrency, tokenBudget })
     .catch((error: Error) => publish({ type: "audit", actor: "fleet", action: "fleet.failed", detail: error.message, ts: Date.now() }));
-  return response.status(202).json({ started: true, agents: members.length, live: members.filter((m) => m.attacker === "droid").length, simulated: members.filter((m) => m.attacker === "scripted").length, concurrency, watcherOn });
+  return response.status(202).json({ started: true, mode: plan.mode, agents: members.length, live: members.filter((m) => m.attacker === "droid").length, simulated: members.filter((m) => m.attacker === "scripted").length, concurrency, tokenBudget: tokenBudget ?? null, watcherOn });
 });
 
 app.get("/api/health", (_request, response) => response.json({ ok: true, service: "batman-console" }));
