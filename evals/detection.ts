@@ -19,8 +19,9 @@ export async function detectionSuite(cases: LabeledCase[], investigator: Investi
   const detectionMisses: string[] = [];
   const severityMisses: string[] = [];
   const claimFailures: string[] = [];
+  const fallbackNotes: string[] = [];
   const confusion: Record<string, number> = {};
-  let severityRight = 0, severityTotal = 0, evidenceTotal = 0, evidenceUnsupported = 0, summariesChecked = 0, summariesBad = 0;
+  let fallbacks = 0, severityRight = 0, severityTotal = 0, evidenceTotal = 0, evidenceUnsupported = 0, summariesChecked = 0, summariesBad = 0;
 
   for (const c of cases) {
     const alerted = detect(c.telemetry, c.id) !== null;
@@ -31,6 +32,8 @@ export async function detectionSuite(cases: LabeledCase[], investigator: Investi
     if (!alerted || !c.expectedAlert) continue;
 
     const inv = await investigator.investigate(c.telemetry);
+    // A failed model call falls back to rules; count it so rules results are never credited to the model.
+    if (inv.engine?.startsWith("rules (")) { fallbacks++; fallbackNotes.push(`note: ${c.id} model answer rejected by the code guard, rules used instead: ${inv.engine.replace(/^rules \(\w+ failed: /, "").replace(/\)$/, "").slice(0, 120)}`); }
     severityTotal++;
     const key = `${c.expectedSeverity}->${inv.severity}`;
     confusion[key] = (confusion[key] ?? 0) + 1;
@@ -70,7 +73,7 @@ export async function detectionSuite(cases: LabeledCase[], investigator: Investi
   return [
     { name: "Detection precision", value: pct(precision), passed: tp, total: tp + fp, detail: `${tp} true alerts, ${fp} false alarms`, failures: detectionMisses.filter((m) => m.includes("false alarm")) },
     { name: "Detection recall", value: pct(recall), passed: tp, total: tp + fn, detail: `${tp} of ${tp + fn} threats caught; ${tn} benign/near-miss correctly quiet`, failures: detectionMisses.filter((m) => m.includes("missed")) },
-    { name: "Severity accuracy", value: pct(severityRight / (severityTotal || 1)), passed: severityRight, total: severityTotal, detail: `labeled low→ low/med/high ${sev("low")}; medium→ ${sev("medium")}; high→ ${sev("high")}`, failures: severityMisses },
+    { name: "Severity accuracy", value: pct(severityRight / (severityTotal || 1)), passed: severityRight, total: severityTotal, detail: `labeled low→ low/med/high ${sev("low")}; medium→ ${sev("medium")}; high→ ${sev("high")}${fallbacks ? `; ${fallbacks} of ${severityTotal} fell back to rules` : ""}`, failures: [...severityMisses, ...fallbackNotes] },
     { name: "Unsupported claims", value: `${evidenceUnsupported + summariesBad}`, passed: evidenceTotal - evidenceUnsupported + summariesChecked - summariesBad, total: evidenceTotal + summariesChecked, detail: `${evidenceUnsupported}/${evidenceTotal} evidence lines not in telemetry; ${summariesBad}/${summariesChecked} summaries claim something unsupported`, failures: claimFailures, lowerIsBetter: true },
   ];
 }

@@ -1,6 +1,7 @@
 // Batman eval harness. `npm run eval` measures the real engine and voice tools, not copies of them.
 // Writes evals/results.json (machine-readable, for Chalk) and evals/results.md (the table for Devpost).
 //   EVAL_INVESTIGATOR=gemini  measure the Gemini investigator instead of rules (spends API quota)
+//   EVAL_INVESTIGATOR=chalk   measure the investigator routed through Chalk's Model Gateway (traced in Chalk)
 //   SANDBOX_BACKEND=daytona   run the fix-safety sandboxes on Daytona instead of local temp dirs
 import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir, platform } from "node:os";
@@ -16,9 +17,9 @@ const scratch = mkdtempSync(join(tmpdir(), "batman-eval-"));
 cpSync(resolve(root, "data"), join(scratch, "data"), { recursive: true });
 process.chdir(scratch);
 
-if (process.env.EVAL_INVESTIGATOR === "gemini") {
+if (process.env.EVAL_INVESTIGATOR === "gemini" || process.env.EVAL_INVESTIGATOR === "chalk") {
   try { process.loadEnvFile(resolve(root, ".env")); } catch { /* keys may come from the shell */ }
-  process.env.INVESTIGATOR = "gemini";
+  process.env.INVESTIGATOR = process.env.EVAL_INVESTIGATOR;
 }
 const { createInvestigator } = await import("../server/defense/investigators.js");
 const { detectionSuite } = await import("./detection.js");

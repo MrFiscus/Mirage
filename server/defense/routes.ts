@@ -20,7 +20,8 @@ const SCENARIOS = {
 defenseRouter.get("/defense/info", (_req, res) =>
   res.json({
     backend: process.env.SANDBOX_BACKEND === "daytona" ? "daytona" : "local",
-    investigator: process.env.INVESTIGATOR === "gemini" && process.env.GEMINI_API_KEY ? "gemini" : "rules",
+    investigator: process.env.INVESTIGATOR === "chalk" && process.env.CHALK_ROUTER_API_KEY && process.env.CHALK_ENV_ID && process.env.CHALK_MODEL ? "chalk"
+      : process.env.INVESTIGATOR === "gemini" && process.env.GEMINI_API_KEY ? "gemini" : "rules",
     planner: "scripted (Droid placeholder)",
     scenarios: SCENARIOS,
   }));

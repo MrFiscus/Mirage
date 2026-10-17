@@ -33,7 +33,7 @@ const WHO = {
   batman: ["Batman", "w-batman", null], sandbox: ["Daytona", "w-daytona", "daytona"], sim: ["Demo setup", "w-sim", null],
   edr: ["Endpoint (EDR)", "w-daytona", "logs"], idp: ["Identity", "w-daytona", "logs"],
   virustotal: ["VirusTotal*", "w-elevenlabs", "intel"], ipinfo: ["IPinfo*", "w-elevenlabs", "intel"], abuseipdb: ["AbuseIPDB*", "w-elevenlabs", "intel"],
-  gemini: ["Gemini", "w-gemini", "gemini"], rules: ["Rules", "w-batman", "gemini"], droid: ["Droid*", "w-droid", "droid"],
+  gemini: ["Gemini", "w-gemini", "gemini"], chalk: ["Chalk", "w-chalk", "chalk"], rules: ["Rules", "w-batman", "gemini"], droid: ["Droid*", "w-droid", "droid"],
   photon: ["Photon", "w-photon", "photon"], analyst: ["Analyst", "w-analyst", null],
 };
 const SYSTEMS = [
@@ -41,6 +41,7 @@ const SYSTEMS = [
   { key: "logs", name: "Endpoint & identity logs", role: "Read-only queries on the PC" },
   { key: "intel", name: "Threat intelligence", role: "VirusTotal, IPinfo, AbuseIPDB" },
   { key: "gemini", name: "Gemini", role: "AI investigator, checked in code" },
+  { key: "chalk", name: "Chalk", role: "AI investigator via Model Gateway, checked in code" },
   { key: "droid", name: "Factory Droid", role: "Fix planner" },
   { key: "photon", name: "Photon", role: "Alerts the on-call analyst" },
 ];
@@ -87,12 +88,13 @@ function feedFrom(trace, inc) {
       case "investigation": {
         const asked = Boolean(d.trace?.model);                 // Gemini was asked (its answer may still have been rejected)
         const gem = asked;
+        const viaChalk = /^(rules \()?chalk/.test(String(d.engine ?? ""));
         const g = d.trace?.guard ?? "";
         const rejected = /^Rejected/.test(g);
-        out.push({ ...e, who: gem ? "gemini" : "rules",
+        out.push({ ...e, who: gem ? (viaChalk ? "chalk" : "gemini") : "rules",
           text: `${!gem ? "Built-in rules reviewed" : rejected ? "AI reviewed" : "AI reviewed"} ${d.evidence?.length ?? 0} pieces of evidence: priority ${PRIORITY[d.severity]}, ${pct(d.confidence)} confident`,
-          sub: gem ? (rejected ? `Guardrail rejected the AI's answer (${g.replace(/^Rejected Gemini's answer: /, "").replace(/\. The built-in rules answered instead\.$/, "")}); built-in rules set the priority instead` : /raised/.test(g) ? "Guardrail raised the AI's priority to match the evidence" : "Passed every guardrail check") : "",
-          query: gem ? `POST generativelanguage.googleapis.com/v1beta/models/${d.trace?.model ?? "gemini"}:generateContent  (${d.trace?.sent?.length ?? 0} numbered evidence lines)` : "built-in severity rules" });
+          sub: gem ? (rejected ? `Guardrail rejected the AI's answer (${g.replace(/^Rejected \w+'s answer: /, "").replace(/\. The built-in rules answered instead\.$/, "")}); built-in rules set the priority instead` : /raised/.test(g) ? "Guardrail raised the AI's priority to match the evidence" : "Passed every guardrail check") : "",
+          query: gem && viaChalk ? `POST api.chalk.ai/v1/router/chat/completions  model ${d.trace?.model ?? ""}  (${d.trace?.sent?.length ?? 0} numbered evidence lines)` : gem ? `POST generativelanguage.googleapis.com/v1beta/models/${d.trace?.model ?? "gemini"}:generateContent  (${d.trace?.sent?.length ?? 0} numbered evidence lines)` : "built-in severity rules" });
         break;
       }
       case "plan": out.push({ ...e, who: "droid", text: `Fix plan ready: ${d.text ?? `${d.commands.length} steps`}`, sub: d.drastic ? "Major change: needs an analyst's approval" : "Minor change: Batman may apply it after testing", query: d.commands.join("  ;  ") }); break;
@@ -226,7 +228,7 @@ function renderBar() {
     <span class="state" aria-live="polite">${esc(status)}</span>
     <span class="chips">${i ? `
       <span class="chip">Machine: ${i.backend === "daytona" ? "Daytona" : "local sandbox"}</span>
-      <span class="chip">AI: ${i.investigator === "gemini" ? "Gemini" : "built-in rules"}</span>` : ""}<a href="explain/" style="color:#c7cbff;margin-left:6px;white-space:nowrap">How it works →</a></span>`;
+      <span class="chip">AI: ${i.investigator === "chalk" ? "Chalk Model Gateway" : i.investigator === "gemini" ? "Gemini" : "built-in rules"}</span>` : ""}<a href="explain/" style="color:#c7cbff;margin-left:6px;white-space:nowrap">How it works →</a></span>`;
   bar.querySelectorAll("[data-tier]").forEach((b) => (b.onclick = () => start(b.dataset.tier)));
   bar.querySelector("#clear").onclick = clearDemo;
 }
@@ -294,8 +296,10 @@ function systemsState(t) {
   const used = new Set(feed.map((f) => WHO[f.who]?.[2]).filter(Boolean));
   const last = WHO[feed.at(-1)?.who]?.[2];
   const running = t.incident.id === state.active;
-  const tag = { daytona: state.info?.backend === "daytona" ? "" : "local stand-in", intel: "placeholder", gemini: state.info?.investigator === "gemini" ? "" : "not configured", droid: "placeholder", photon: "demo mode" };
-  return `<ul class="systems">${SYSTEMS.map((s) => {
+  const tag = { daytona: state.info?.backend === "daytona" ? "" : "local stand-in", intel: "placeholder", gemini: state.info?.investigator === "gemini" ? "" : "not configured", chalk: state.info?.investigator === "chalk" ? "" : "not configured", droid: "placeholder", photon: "demo mode" };
+  // One AI investigator row: Chalk when it is the active investigator, otherwise Gemini.
+  const shown = SYSTEMS.filter((s) => s.key !== (state.info?.investigator === "chalk" ? "gemini" : "chalk"));
+  return `<ul class="systems">${shown.map((s) => {
     const cls = running && last === s.key ? "busy" : used.has(s.key) ? "done" : "";
     return `<li class="${cls}"><span class="dot"></span><span><b>${esc(s.name)}</b><br><span style="color:var(--muted)">${esc(s.role)}</span></span><span class="tag">${esc(tag[s.key] ?? "")}</span></li>`;
   }).join("")}</ul>`;

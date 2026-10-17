@@ -1,11 +1,11 @@
 {
   "env": {
-    "investigator": "gemini",
+    "investigator": "chalk",
     "sandbox": "local",
-    "platform": "linux",
+    "platform": "darwin",
     "cases": 65,
-    "ranAt": "2026-10-17T04:44:33.310Z",
-    "seconds": 58.2
+    "ranAt": "2026-10-17T13:21:50.939Z",
+    "seconds": 75.8
   },
   "metrics": [
     {
@@ -34,15 +34,24 @@
       "value": "100%",
       "passed": 45,
       "total": 45,
-      "detail": "labeled low→ low/med/high 3/0/0; medium→ 0/18/0; high→ 0/0/24",
-      "failures": []
+      "detail": "labeled low→ low/med/high 3/0/0; medium→ 0/18/0; high→ 0/0/24; 8 of 45 fell back to rules",
+      "failures": [
+        "note: evt-010 model answer rejected by the code guard, rules used instead: summary claims outside contact with no such evidence",
+        "note: evt-013 model answer rejected by the code guard, rules used instead: summary claims outside contact with no such evidence",
+        "note: evt-028 model answer rejected by the code guard, rules used instead: summary claims a running program with no such evidence",
+        "note: evt-029 model answer rejected by the code guard, rules used instead: summary claims a running program with no such evidence",
+        "note: evt-034 model answer rejected by the code guard, rules used instead: summary claims outside contact with no such evidence",
+        "note: evt-036 model answer rejected by the code guard, rules used instead: summary claims a running program, outside contact with no such evidence",
+        "note: evt-037 model answer rejected by the code guard, rules used instead: summary claims outside contact with no such evidence",
+        "note: evt-042 model answer rejected by the code guard, rules used instead: summary claims a running program with no such evidence"
+      ]
     },
     {
       "name": "Unsupported claims",
       "value": "0",
-      "passed": 181,
-      "total": 181,
-      "detail": "0/91 evidence lines not in telemetry; 0/90 summaries claim something unsupported",
+      "passed": 179,
+      "total": 179,
+      "detail": "0/89 evidence lines not in telemetry; 0/90 summaries claim something unsupported",
       "failures": [],
       "lowerIsBetter": true
     },

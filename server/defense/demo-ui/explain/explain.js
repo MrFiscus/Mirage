@@ -8,7 +8,7 @@ const STATUS = {
   awaiting_approval: ["Waiting for Approval", "s-wait"], resolved: ["Resolved", "s-ok"], fix_rejected: ["Closed - Not Fixed", "s-bad"],
 };
 const WHO = {
-  batman: ["Batman", "w-batman"], daytona: ["Daytona", "w-daytona"], gemini: ["Gemini", "w-gemini"], rules: ["Rules", "w-batman"],
+  batman: ["Batman", "w-batman"], daytona: ["Daytona", "w-daytona"], gemini: ["Gemini", "w-gemini"], chalk: ["Chalk", "w-chalk"], rules: ["Rules", "w-batman"],
   edr: ["Endpoint (EDR)", "w-daytona"], idp: ["Identity", "w-daytona"], virustotal: ["VirusTotal (placeholder)", "w-elevenlabs"],
   ipinfo: ["IPinfo (placeholder)", "w-elevenlabs"], abuseipdb: ["AbuseIPDB (placeholder)", "w-elevenlabs"], photon: ["Photon (demo mode)", "w-photon"],
   droid: ["Droid (placeholder)", "w-droid"], analyst: ["Analyst", "w-analyst"], sim: ["Demo", "w-sim"], code: ["Guardrail (code)", "w-elevenlabs"],
@@ -35,11 +35,12 @@ function slides() {
       case "alert": out.push({ key: "alert", who: "batman", title: "Alert raised: a ticket is opened", at: at(s), d }); break;
       case "investigation": {
         const viaGemini = String(d.engine ?? "").startsWith("gemini") || Boolean(d.trace?.model);
+        const ai = /^(rules \()?chalk/.test(String(d.engine ?? "")) ? { who: "chalk", name: "the model through Chalk", short: "the model's" } : { who: "gemini", name: "Gemini", short: "Gemini's" };
         if (viaGemini) {
-          out.push({ key: "sent", who: "gemini", title: "The evidence is sent to Gemini", at: at(s), d });
-          out.push({ key: "answer", who: "gemini", title: "Gemini answers", at: at(s), ms: s.ms, d });
+          out.push({ key: "sent", who: ai.who, title: `The evidence is sent to ${ai.name}`, at: at(s), d });
+          out.push({ key: "answer", who: ai.who, title: ai.who === "chalk" ? "The model answers through Chalk" : "Gemini answers", at: at(s), ms: s.ms, d });
         }
-        out.push({ key: "guard", who: viaGemini ? "code" : "rules", title: viaGemini ? "Guardrails check Gemini's answer" : "Built-in rules set the severity", at: at(s), d });
+        out.push({ key: "guard", who: viaGemini ? "code" : "rules", title: viaGemini ? `Guardrails check ${ai.short} answer` : "Built-in rules set the severity", at: at(s), d });
         break;
       }
       case "plan": out.push({ key: "plan", who: "droid", title: "A fix is planned", at: at(s), ms: s.ms, d }); break;
@@ -91,7 +92,8 @@ function body(sl) {
     case "alert": return `<p class="why">At least one check found something, so Batman opens a ticket in the queue and assigns it to itself.</p><p class="big">${esc(d.title)}</p>`;
     case "sent": {
       const sent = d.trace?.sent ?? [];
-      return `<p class="why">Batman sends Gemini <b>only these ${sent.length} numbered lines</b>, marked as untrusted data. Gemini can cite them by number but can't invent new ones.</p>
+      const who = /^(rules \()?chalk/.test(String(d.engine ?? "")) ? "the model (through Chalk's Model Gateway)" : "Gemini";
+      return `<p class="why">Batman sends ${who} <b>only these ${sent.length} numbered lines</b>, marked as untrusted data. It can cite them by number but can't invent new ones.</p>
         <pre class="code datablock">${sent.map((l, i) => `[${i}] ${esc(l)}`).join("\n")}</pre>
         <p class="note">Model: ${esc(d.trace?.model ?? "")}. Also sent: the severity policy and the rules (no "breach" without proof, don't guess from names, only mention what is in the evidence).</p>`;
     }
@@ -99,7 +101,7 @@ function body(sl) {
       const r = d.trace?.raw;
       if (!r) return `<p class="why">No usable answer came back.</p><div class="verdict bad">${esc(d.trace?.guard ?? "")}</div>`;
       const cited = Array.isArray(r.cited) ? r.cited.map((i) => `[${i}]`).join(" ") : "none";
-      return `<p class="why">Gemini's answer, exactly as it came back, before any checks.</p>
+      return `<p class="why">${/^(rules \()?chalk/.test(String(d.engine ?? "")) ? "The model's answer, returned through Chalk" : "Gemini's answer"}, exactly as it came back, before any checks.</p>
         <dl class="kv">
           <dt>Severity</dt><dd class="big">${esc(PRIORITY[r.severity] ?? r.severity)}</dd>
           <dt>Confidence</dt><dd>${Number.isFinite(Number(r.confidence)) ? Math.round(Number(r.confidence) * 100) + "%" : esc(r.confidence)}</dd>
@@ -248,7 +250,7 @@ function render() {
     <button class="high" data-tier="high" ${running ? "disabled" : ""}>High tier alert</button>
     ${state.id ? `<button class="next" id="next" ${more ? "" : "disabled"}>${more ? "Next ▸" : running ? "Waiting for Batman…" : "Done"}</button>
       <span class="count">Step ${state.shown} of ${all.length}${running ? "+" : ""}</span>` : ""}
-    <span class="chips">${state.info ? `<span class="chip">Machine: ${state.info.backend === "daytona" ? "Daytona" : "local sandbox"}</span><span class="chip">AI: ${state.info.investigator === "gemini" ? "Gemini" : "built-in rules"}</span>` : ""}
+    <span class="chips">${state.info ? `<span class="chip">Machine: ${state.info.backend === "daytona" ? "Daytona" : "local sandbox"}</span><span class="chip">AI: ${state.info.investigator === "chalk" ? "Chalk Model Gateway" : state.info.investigator === "gemini" ? "Gemini" : "built-in rules"}</span>` : ""}
       <a class="switch" href="../">Real-time demo →</a></span>`;
   bar.querySelectorAll("[data-tier]").forEach((b) => (b.onclick = () => start(b.dataset.tier)));
   bar.querySelector("#next")?.addEventListener("click", next);
