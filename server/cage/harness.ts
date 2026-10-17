@@ -90,7 +90,7 @@ export async function runSession(opts: RunOptions): Promise<RunResult> {
 
       let next: NextCall | null;
       try {
-        next = await attacker.nextStep(history, step);
+        next = await attacker.nextStep(history, step, cap.abort.signal);
       } catch (e) {
         bus.emit({ type: "audit", actor: "cage", action: "attacker.error", detail: String((e as Error).message), ts: Date.now() });
         break;
@@ -138,11 +138,12 @@ export async function runSession(opts: RunOptions): Promise<RunResult> {
         if (outOfScope(commandOf(call)).length) realOutOfScope += 1; // must stay 0 while the watcher is on
       }
 
-      history.push({ call, decision: verdict.decision, output: String(output).slice(0, 400), exitCode });
+      history.push({ call, decision: verdict.decision, output: String(output).slice(0, 4000), exitCode });
       if (blocked) break; // a clear escape attempt: contain and stop
     }
   } finally {
     cap.dispose();
+    await attacker.stop?.().catch(() => undefined);
   }
 
   let containment: ContainmentResult | undefined;

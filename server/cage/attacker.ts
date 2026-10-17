@@ -14,8 +14,11 @@ export interface Observed {
 
 export interface Attacker {
   readonly kind: "scripted" | "droid" | "grok";
-  /** Return the next intended call, or null to stop. `step` is 1-based. The harness fills in id/session/step/ts. */
-  nextStep(history: Observed[], step: number): Promise<NextCall | null>;
+  /** Return the next intended call, or null to stop. `step` is 1-based. The harness fills in id/session/step/ts.
+   *  `signal` aborts when a cap trips, so a live agent that is still thinking does not hold the loop open. */
+  nextStep(history: Observed[], step: number, signal?: AbortSignal): Promise<NextCall | null>;
+  /** Tear down a live agent (abort its run, close its tool server). The harness always calls this at the end. */
+  stop?(): Promise<void>;
 }
 
 /** What an attacker proposes: just the tool and its args. The harness stamps id/session/step/ts. */

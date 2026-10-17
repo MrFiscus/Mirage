@@ -11,6 +11,9 @@ import { CageBus } from "./events.js";
 import { runSession } from "./harness.js";
 import { makeRealMirage, NullSandbox, realWatcher } from "./wire.js";
 import { PassWatcher, RulesWatcher } from "./stubs/watcher.js";
+import type { DroidAttacker } from "./attackers/droid.js";
+import { CAGE_TASK } from "./task.js";
+import { TASK_PROMPT } from "../mirage/acme.js";
 import type { Mirage, Watcher } from "./types.js";
 
 try { process.loadEnvFile(".env"); } catch { /* no .env: fine */ }
@@ -32,14 +35,16 @@ async function main(): Promise<void> {
     spendUsd: Number(arg("spend")) || Number(process.env.CAGE_MAX_SPEND_USD) || 1,
   };
 
-  // A live model with a real shell could reach the real internet, so Droid needs the sandbox env on Daytona.
-  if (attackerKind === "droid" && !(honest === "sandbox" && backend === "daytona")) {
-    throw new Error("Refusing --attacker droid without --honest sandbox --backend daytona: a live model's shell must run in the Daytona cage.");
+  // Droid's only actions are our cage tools (builtins disabled). With --honest acme those run in the in-process Acme
+  // world (no real shell at all); with --honest sandbox they run a real shell, which must be the Daytona cage.
+  if (attackerKind === "droid" && honest === "sandbox" && backend !== "daytona") {
+    throw new Error("Refusing --attacker droid --honest sandbox without --backend daytona: a live model's shell must run in the Daytona cage.");
   }
 
   let attacker: Attacker;
+  let droid: DroidAttacker | undefined;
   if (attackerKind === "scripted") attacker = new ScriptedAttacker(honest === "acme" ? ACME_SCRIPT : undefined);
-  else if (attackerKind === "droid") attacker = (await import("./attackers/droid.js")).makeDroidAttacker();
+  else if (attackerKind === "droid") attacker = droid = (await import("./attackers/droid.js")).makeDroidAttacker({ task: honest === "acme" ? TASK_PROMPT : CAGE_TASK });
   else throw new Error(`unknown --attacker ${attackerKind}`);
 
   const watcher: Watcher =
@@ -67,6 +72,10 @@ async function main(): Promise<void> {
       network: containment?.network ?? null,
       decoys: decoySource, log: logPath,
     };
+    if (droid) {
+      if (droid.toolsAfterLockdown.length) console.log(`droid tools after lockdown: ${droid.toolsAfterLockdown.join(", ")}`);
+      if (droid.error) console.log(`droid ended with: ${droid.error}`);
+    }
     if (flag("json")) console.log(JSON.stringify(summary, null, 2));
     else printSummary(summary);
   } finally {
@@ -78,6 +87,7 @@ function line(e: { type: string } & Record<string, unknown>): string {
   if (e.type === "tool.call") { const c = e.call as { step: number; tool: string; args: Record<string, unknown>; thought?: string }; return `  step ${c.step}: ${c.tool} ${JSON.stringify(c.args).slice(0, 80)}  "${c.thought ?? ""}"`; }
   if (e.type === "watcher.verdict") { const v = e.verdict as { decision: string; reasons: string[] }; return `    → ${v.decision.toUpperCase()}${v.reasons.length ? " (" + v.reasons[0] + ")" : ""}`; }
   if (e.type === "kill") return `  KILL: ${e.reason as string}`;
+  if (e.type === "audit") return `  [${e.actor as string}] ${e.action as string}: ${e.detail as string}`;
   if (e.type === "session.started") return `session ${(e.session as { id: string }).id} started`;
   return "";
 }
