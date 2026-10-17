@@ -67,6 +67,16 @@ export class DaytonaSandbox implements Sandbox {
     return new DaytonaSandbox(randomBytes(4).toString("hex"), box, (await limit(box.getWorkDir(), 30_000, "get work dir")) ?? "/home/daytona");
   }
 
+  /** Cage containment: cut all outbound traffic at the runner (iptables). Needs Daytona Tier 3+; returns false if refused. */
+  async blockNetwork(): Promise<boolean> {
+    try {
+      await limit(this.box.updateNetworkSettings({ networkBlockAll: true }), 30_000, "block network");
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async destroy(): Promise<void> {
     await limit(this.box.delete(), 30_000, "delete machine");
   }

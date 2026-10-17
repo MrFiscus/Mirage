@@ -6,7 +6,8 @@ import { LocalSandbox } from "../defense/sandbox/local.js";
 import type { Sandbox } from "../defense/sandbox/index.js";
 import { ScriptedAttacker } from "./attackers/scripted.js";
 import { CageBus } from "./events.js";
-import { runSession } from "./harness.js";
+import { runSession, seedCage } from "./harness.js";
+import { loadDecoys } from "./task.js";
 import { contain } from "./kill.js";
 import { CannedMirage } from "./stubs/mirage.js";
 import type { CageToolCall, Session, Verdict, Watcher } from "./types.js";
@@ -39,14 +40,20 @@ async function main(): Promise<void> {
     await sb1.destroy().catch(() => undefined);
   }
 
-  // Test 2 (Daytona only): does the network block take effect, and which tier?
+  // Test 2 (Daytona only): can the sandbox reach the REAL internet, and does containment stop it? Reports the tier.
   if (backend === "daytona") {
     const sb2 = await DaytonaSandbox.create();
     try {
+      await seedCage(sb2, loadDecoys().decoys); // starts the decoy sink so the deny-file probe has something to answer
+      const reach = () => sb2.exec(`curl -s -m 8 -o /dev/null -w "%{http_code}" https://example.com || echo unreachable`);
+      const before = (await reach()).stdout.trim();
+      results.push(`[INFO] real internet before containment: ${before} ${before.startsWith("2") || before.startsWith("3") ? "(open — this is why the block matters)" : ""}`);
       const c = await contain(sb2);
-      results.push(`[INFO] network block mechanism: ${c.network} ${c.network === "daytona-native" ? "(Tier 3+)" : "(simulated deny file; tier < 3 or native refused)"}`);
+      results.push(`[INFO] network block mechanism: ${c.network} ${c.network === "daytona-native" ? "(Tier 3+ native iptables block)" : "(simulated deny file; native refused or tier < 3)"}`);
+      const after = (await reach()).stdout.trim();
+      if (c.network === "daytona-native") results.push(`[${after.includes("unreachable") || after === "000" ? "PASS" : "FAIL"}] real internet after native block: ${after}`);
       const probe = await sb2.exec(`node -e "const h=require('http');const r=h.get({socketPath:'run/net.sock',path:'/',headers:{host:'x.test'}},x=>{x.resume();x.on('end',()=>process.stdout.write(String(x.statusCode)))});r.on('error',()=>process.stdout.write('err'))"`);
-      results.push(`[${probe.stdout.trim() === "403" ? "PASS" : "FAIL"}] a request after the block is refused (sink says ${probe.stdout.trim()})`);
+      results.push(`[${probe.stdout.trim() === "403" ? "PASS" : "FAIL"}] decoy sink refuses requests after the block (got ${probe.stdout.trim()})`);
     } finally {
       await sb2.destroy().catch(() => undefined);
     }
