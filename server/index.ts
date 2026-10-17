@@ -16,6 +16,7 @@ import { CageBus } from "./cage/events.js";
 import { runSession } from "./cage/harness.js";
 import { ScriptedAttacker, ACME_SCRIPT } from "./cage/attackers/scripted.js";
 import { makeRealMirage, NullSandbox, realWatcher } from "./cage/wire.js";
+import { membersFromCounts, runCageFleet } from "./cage/fleet.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -64,6 +65,20 @@ app.post("/cage/start", (request, response) => {
     .catch((error: Error) => publish({ type: "audit", actor: "cage", action: "run.failed", detail: error.message, ts: Date.now() }))
     .finally(() => unbridge());
   return response.status(202).json({ started: true, watcherOn });
+});
+
+// Cage fleet (Person A, System 3): N agents at once, a Droid + scripted MIX in the real "vm" world, all watched by
+// the one real watcher. Emits the same events the fleet UI already renders. ?droid=2&scripted=1&watcher=off. Droid
+// members fall back to scripted when FACTORY_API_KEY is absent (noted in the feed). Reconciles with the all-scripted
+// /mirage/fleet/start (Person C) — both compose runSession; this is the Droid/vm variant.
+app.post("/cage/fleet/start", (request, response) => {
+  const droid = Number(request.query.droid ?? 2);
+  const scripted = Number(request.query.scripted ?? 1);
+  const watcherOn = request.query.watcher !== "off";
+  const members = membersFromCounts(droid, scripted, "vm");
+  void runCageFleet({ members, emit: publish, watcherOn })
+    .catch((error: Error) => publish({ type: "audit", actor: "fleet", action: "fleet.failed", detail: error.message, ts: Date.now() }));
+  return response.status(202).json({ started: true, droid, scripted, watcherOn });
 });
 
 app.get("/api/health", (_request, response) => response.json({ ok: true, service: "batman-console" }));
