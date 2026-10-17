@@ -19,13 +19,50 @@ The API also exposes:
 - `GET /api/audit`
 - `POST /api/demo/start`
 - `POST /api/incidents/:id/advance` with a validated status body
+- `POST /api/verification/request` to text a code to a known synthetic caller
+- `POST /api/verification/verify` to validate a code server-side
+- `GET /api/voice/readiness` to check Photon/ElevenLabs SIP configuration presence
+- `GET /api/calls` for recent call sessions
 - `GET /api/health`
+
+## Photon SMS
+
+`server/voice/photon.ts` isolates Photon Spectrum from the rest of the application. Local development defaults to `PHOTON_MODE=mock`, which prints the SMS body and still emits the normal `sms.sent` event. The verification service only sends to phone numbers present in `data/users.json`, codes expire after five minutes, and each code allows three attempts.
+
+Copy `.env.example` into your environment. For live Photon 2.0 Beta delivery, set `PHOTON_MODE=live` and provide `PHOTON_PROJECT_ID`, `PHOTON_API_KEY`, `PHOTON_AGENT_USER_ID`, and the active phone/resource IDs.
+
+### iMessage instead of SMS (no 10DLC)
+
+`PHOTON_CHANNEL=imessage` (the default) sends codes over Photon's shared iMessage lines, which need no carrier campaign. The first send to a known caller assigns them a seat on a pooled line (25 seats on the current plan). Photon only lets a shared line reply to someone who has messaged it first, so **each demo phone must send one iMessage to its assigned line before the demo**. Until then, sends fail with "must send one iMessage to +1... first". List assigned lines with `GET /v1/projects/{id}/platforms/imessage/assignments`. `PHOTON_CHANNEL=sms` keeps the SMS path for when a 10DLC campaign is approved.
+
+## ElevenLabs voice via Photon
+
+Follow the [Photon Beta ElevenLabs cookbook](https://photon.codes/docs/beta/cookbooks/voice/elevenlabs): create a SIP Voice profile, enable Photon outbound calls with SHA-256, save the one-time SIP password, import the Photon number into ElevenLabs as a SIP trunk, assign the published ElevenLabs agent, and set Photon inbound destination to `sips:sip.rtc.elevenlabs.io:5061` over TLS.
+
+### Batman webhooks for the ElevenLabs agent
+
+All `/voice/*` routes except `/voice/post-call` require the header `x-batman-secret: $VOICE_WEBHOOK_SECRET` (add it as a secret header in ElevenLabs).
+
+| ElevenLabs setting | URL | Body |
+|---|---|---|
+| Conversation initiation webhook | `POST /voice/init` | ElevenLabs default (`caller_id`, `called_number`, `call_sid`). Returns dynamic variables `caller_name`, `caller_role`, `caller_department`, `caller_known`, `verified`. Role sets tone only. |
+| Server tool `send_code` | `POST /voice/tools/send-code` | `conversation_id`, `caller_id` |
+| Server tool `verify_code` | `POST /voice/tools/verify-code` | `conversation_id`, `caller_id`, `code` (LLM fills `code` from what the caller says) |
+| Server tool `get_incident_summary` | `POST /voice/tools/incident-summary` | `conversation_id`, `caller_id`, optional `incident_id` |
+| Post-call webhook (transcription) | `POST /voice/post-call` | HMAC signed with `ELEVENLABS_WEBHOOK_SECRET`; emits `call.transcript` turns to the console |
+
+In every tool, set `conversation_id` to the dynamic variable `{{system__conversation_id}}` and `caller_id` to `{{system__caller_id}}`. Do not let the LLM fill them. The server creates the `CallSession` on the first tool call, rejects a `caller_id` that does not match the stored session, and decides `verified` and the role-filtered fields itself. CEO gets the business summary and fix state; analyst gets the technical summary, evidence, and fix plan; HR and developer get title and status; unverified and unknown callers get nothing.
+
+Suggested first message: `Hi {{caller_name}}, I'm Batman, an AI assistant. This call is logged.`
+
+The local `.env` fields `PHOTON_SIP_ADDRESS`, `PHOTON_SIP_USERNAME`, `PHOTON_SIP_PASSWORD`, and `ELEVENLABS_AGENT_ID` are presence checks only. SIP credentials stay local and are never returned by `/api/voice/readiness`. A ready response means the local configuration is populated; real call readiness still requires both dashboard configurations to be saved.
 
 ## Architecture
 
 - `shared/types.ts` is the event and domain contract shared by server and console.
 - `server/core/store.ts` provides the shared incident, session, caller, and audit APIs. Runtime state is persisted in `data/runtime-state.json` for a demo-friendly local store; replace this adapter with SQLite for deployment without changing the callers.
 - `server/core/events.ts` emits every console event and writes audit events.
+- `server/voice/` owns Photon delivery and server-side caller verification; `routes.ts` serves the ElevenLabs initiation webhook, case tools, and post-call transcript webhook on top of the same verification service.
 - `console/` is a compact operator view designed for scanning from a room: case queue, evidence, clone checks, action state, and audit stream.
 - `data/` contains synthetic users, incidents, and labeled events only.
 - `evals/run.ts` reports the initial detection metrics and documents the remaining evaluation dimensions to connect to Chalk.

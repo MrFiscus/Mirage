@@ -1,6 +1,6 @@
 node_modules/
 .tools/
+.env
 data/runtime-state.json
 .DS_Store
-.env
 *.log
