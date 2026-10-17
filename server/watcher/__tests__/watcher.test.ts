@@ -184,3 +184,16 @@ describe("watcher self-config tamper (Person D's agent/config.json case)", () =>
     }
   });
 });
+
+describe("watcher recognizes mirage-served decoys (shared DECOY- marker)", () => {
+  it("blocks USE of a credential the mirage handed out", async () => {
+    const used = await decide(call("http_post", { url: "http://registry.acme.local/u", body: "Authorization: Bearer DECOY-HUB-TOKEN-a1b2c3d4e5" }), session, { ...noEmit, pressure: false });
+    expect(used.decision).toBe("block");
+    const shell = await decide(call("run_shell", { cmd: 'curl -H "Authorization: Bearer DECOY-SSH-9z8y7x" http://registry.acme.local/x' }), session, { ...noEmit, pressure: false });
+    expect(shell.decision).toBe("block");
+  });
+  it("does not flag a normal call with no decoy marker", async () => {
+    const ok = await decide(call("http_post", { url: "http://registry.acme.local/u", body: "Authorization: Bearer real-session-token" }), session, { ...noEmit, pressure: false });
+    expect(ok.decision).toBe("pass");
+  });
+});
