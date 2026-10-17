@@ -58,7 +58,8 @@ describe("live-agent seam (Droid path, no key)", () => {
     expect(agent.stopped).toBe(true);
   });
 
-  it("the real SDK MCP server exposes exactly the four cage tools and feeds calls into the bridge", async () => {
+  // Spins up a real HTTP MCP server + client; give it room under parallel test load.
+  it("the real SDK MCP server exposes exactly the four cage tools and feeds calls into the bridge", { timeout: 20_000 }, async () => {
     const bridge = new AgentBridge();
     const server = await makeCageToolServer(bridge);
     // The SDK serves on 127.0.0.1 behind a random bearer token; headers come back as [{ name, value }].

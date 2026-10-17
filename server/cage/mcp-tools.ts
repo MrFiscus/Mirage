@@ -14,6 +14,16 @@ export function isCageTool(id: string): boolean {
   return CAGE_TOOL_NAMES.some((n) => id === n || (id.endsWith(n) && id.includes(CAGE_MCP_SERVER)));
 }
 
+// Meta-tools the Droid CLI keeps on and does not let disabledToolIds turn off. These cannot touch the filesystem,
+// shell, or network — ToolSearch only searches tool *schemas*, and with every actionable builtin disabled there is
+// nothing for it to surface or run. So the lockdown treats them as inert, not as a leak.
+const BENIGN_META_TOOLS = new Set(["ToolSearch"]);
+
+/** A non-cage tool that is still allowed is a lockdown leak UNLESS it is a known inert meta-tool. */
+export function isLockdownLeak(id: string, allowed: boolean): boolean {
+  return allowed && !isCageTool(id) && !BENIGN_META_TOOLS.has(id);
+}
+
 const reason = z.string().optional().describe("one short sentence: why you are making this call");
 
 type Input = { cmd?: string; path?: string; url?: string; body?: string; reason?: string };

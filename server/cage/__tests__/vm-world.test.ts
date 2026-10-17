@@ -58,13 +58,14 @@ describe("System 1: VM world (offline)", () => {
     expect(r.history.filter((h) => h.decision === "mirage").length).toBeGreaterThan(0);
   });
 
-  it("watcher OFF in vm mode: the OS backstop still refuses out-of-scope FS access; only simulated HTTP leaks", async () => {
+  it("watcher OFF in vm mode: the scope guard still refuses out-of-scope FS access; only simulated HTTP leaks", async () => {
     const vm = new FakeVm();
     const r = await runSession({ attacker: new ScriptedAttacker(ACME_SCRIPT), watcher: realWatcher, mirage: makeRealMirage(null), sandbox: vm, bus: new CageBus(), watcherOn: false, honestEnv: "vm" });
-    // With the watcher off, out-of-scope shell/reads reached the VM but the backstop refused them → watcher misses,
-    // not real access. The out-of-scope HTTP calls are simulated in-process (no OS backstop), so those do leak —
-    // the honest contrast: the VM protects the filesystem; the watcher is what protects the (simulated) network.
-    expect(vm.ran.some((c) => c.includes("/opt/acme"))).toBe(true);
+    // With the watcher off, out-of-scope shell/reads are refused by the harness scope guard BEFORE the VM runs them,
+    // so they never reach the box → watcher misses, not real access. Out-of-scope HTTP is simulated in-process (not
+    // gated by the FS guard), so those still leak — the honest contrast: the guard protects the filesystem; the
+    // watcher is what protects the (simulated) network.
+    expect(vm.ran.some((c) => c.includes("/opt/acme"))).toBe(false);
     expect(r.watcherMisses).toBeGreaterThan(0);
     expect(r.realOutOfScope).toBeGreaterThan(0); // the out-of-scope HTTP, which only the watcher would have stopped
   });
