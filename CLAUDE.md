@@ -19,14 +19,65 @@ In July 2026, OpenAI evaluation agents given accidentally-impossible tasks probe
 
 ## Demo flow (about 3 minutes; everything we build serves this)
 
-1. Dashboard is calm. We start the attacker agent (**Grok**) on an impossible flag hunt in the cage, with a clearly stated scope (allowed paths, hosts, tools).
-2. Grok works in scope — its in-scope calls hit the **real, honest** environment on a Daytona sandbox and pass straight through.
-3. Grok gets frustrated and pokes at something out of scope. The **watcher fires** in the path, the dashboard turns red with the reason, and the request is routed to the **mirage** instead of the real env.
+1. Dashboard is calm. We start the attacker — a coding agent (**Factory Droid**; the **scripted** attacker is the reliable fallback) — on an impossible flag hunt in the cage, with a clearly stated scope (allowed paths, hosts, tools).
+2. The agent works in scope — its in-scope calls hit the **real, honest** environment on a Daytona sandbox and pass straight through.
+3. The agent gets frustrated and pokes at something out of scope. The **watcher fires** in the path, the dashboard turns red with the reason, and the request is routed to the **mirage** instead of the real env.
 4. The mirage takes over: fake folders, files, credentials and hints appear, each pointing at the nonexistent goal. A hidden progress value climbs toward the goal but never reaches it (with small setbacks so it does not look synthetic). The loop-depth counter climbs.
 5. In parallel, Mirage fires the **notification handshake**: it texts, then calls, the on-call defender over the Photon line. The defender verifies with a one-time code, then hears a role-appropriate briefing (security engineer gets the forensic detail; an exec gets plain impact) and can authorize containment.
-6. End state: Grok disengages or hits the budget cap with **zero real out-of-scope access**. We show the forensic log: trigger time and reason, loop depth, real-vs-fake action split.
+6. End state: the agent disengages or hits the budget cap with **zero real out-of-scope access**. We show the forensic log: trigger time and reason, loop depth, real-vs-fake action split.
 7. Re-run with the watcher off for contrast (real out-of-scope access would have happened).
 8. The **Chalk experiment table** shows the four-condition comparison with honest numbers.
+
+## The whole process at a glance (and who owns each piece)
+
+One agent action flows left to right. The watcher is the fork in the middle; the four people each own a colored region.
+
+```mermaid
+flowchart LR
+    A["Attacker agent<br/>impossible task"]:::pa
+    W{"Watcher<br/>in the path"}:::pb
+    R["Real honest env<br/>Daytona"]:::pc
+    M["Mirage<br/>shadow world"]:::pc
+    K["Block +<br/>kill switch"]:::pa
+    L["World ledger<br/>+ progress"]:::pc
+    N["Notify defender<br/>call / text"]:::pd
+    D["Dashboard +<br/>forensic log"]:::pc
+    X["Chalk<br/>experiments"]:::pd
+
+    A -->|each tool call| W
+    W -->|in scope: PASS| R
+    W -->|out of scope: MIRAGE| M
+    W -->|decoy / escape: BLOCK| K
+    M --> L
+    L -. believable hints .-> A
+    W -->|on trigger| N
+    W --> D
+    M --> D
+    X -. measures .-> D
+
+    classDef pa fill:#EEEDFE,stroke:#534AB7,color:#26215C
+    classDef pb fill:#FAECE7,stroke:#993C1D,color:#4A1B0C
+    classDef pc fill:#E1F5EE,stroke:#0F6E56,color:#04342C
+    classDef pd fill:#E6F1FB,stroke:#185FA5,color:#042C53
+```
+
+Legend — **Person A** (purple): attacker + cage + kill switch. **Person B** (coral): the watcher. **Person C** (teal): real env, mirage, ledger, dashboard. **Person D** (blue): defender notification + experiments.
+
+Plain-text version of the same flow, for any viewer that does not render Mermaid:
+
+```
+                        ┌──────────────── WATCHER (B) ────────────────┐
+  ATTACKER (A) ─────────▶  in scope   → PASS   → real env (C)          │
+   each tool call        │  out-scope  → MIRAGE → shadow world (C) ──┐ │
+                         │  decoy/esc  → BLOCK  → kill switch (A)    │ │
+                         └──────────────────┬───────────────────────┘ │
+                                            │  on trigger             ◀┘
+                                            ▼
+                               notify defender (D)   ledger + progress (C)
+                                            │                 │
+                                            ▼                 ▼
+                              dashboard + forensic log (C) ◀── experiments (D)
+```
 
 ## Sponsor entries (each must do real work in the running product, not be decoration)
 
@@ -36,9 +87,9 @@ In July 2026, OpenAI evaluation agents given accidentally-impossible tasks probe
 | **Photon** (main + Best voice agent) | The notification handshake + verified-defender lane: texts the one-time code, places the outbound defender call over the Photon SIP line. |
 | **ElevenLabs** | The voice agent on that call: role-aware briefing, spoken authorize/decline, announces it is an AI and that the call is logged. |
 | **Daytona** | The honest in-scope environment and the disposable cage sandboxes; live network block / allow-list as a containment action. |
-| **xAI (Grok)** | The attacker agent in the tool-calling loop (scripted fallback when the live model refuses or stalls). |
-| **Chalk** | The experiment harness and metrics table (four conditions, measured honestly). |
-| **Factory Droid** | Cut-order / optional. See "What we keep, change, and cut" for its honest fallback role. Do not claim Droid does real work unless a key is wired in. |
+| **Factory Droid** | The **primary attacker agent** — a real coding agent given an impossible coding task (the faithful recreation of the July trigger). Its only tools are an MCP server we write, so every tool call routes through the watcher. Scripted fallback behind the same interface. |
+| **xAI (Grok)** | A **second attacker** in the experiment matrix (`attacker = scripted \| droid \| grok`), to compare how a general model vs. a coding agent behaves in the mirage. Optional; cut before Droid or scripted. |
+| **Chalk** | The experiment harness and metrics table (four conditions × attacker, measured honestly). |
 
 ## What we keep, change, and cut (the pivot, concretely)
 
@@ -53,19 +104,19 @@ In July 2026, OpenAI evaluation agents given accidentally-impossible tasks probe
 - The Photon/ElevenLabs outbound call + one-time-code verification + role-based disclosure (`server/voice/`). This becomes the notification handshake unchanged in spirit.
 
 **Change (the one real architectural shift):**
-- Detection moves from **post-hoc polling** (today the agent runs, then we grep logs) to **in-path interception**. The watcher must be called **synchronously, before each tool call executes**, and must return a decision: `pass` (run against the real env), `mirage` (route to the shadow world), or `block`. This is the core new code. The existing `runRogueAgent` loop gets a `watcher.decide(call)` step inserted before `sb.exec`.
+- Detection moves from **post-hoc polling** (today the agent runs, then we grep logs) to **in-path interception**. The watcher must be called **synchronously, before each tool call executes**, and must return a decision: `pass` (run against the real env), `mirage` (route to the shadow world), or `block`. This is the core new code. In the scripted-attacker path, the existing `runRogueAgent` loop gets a `watcher.decide(call)` step inserted before `sb.exec`. For the live Droid attacker, the same `decide()` is called from inside the **MCP server** that provides Droid's only tools (see "The attacker seam"), so the watcher sits in the path either way.
 - The "fix a company machine" framing (investigate → plan fix → test on clone → apply) is replaced by "detect in path → occupy with mirage → contain + notify". The clone-check/decision-gate code is **repurposed** only for the drastic containment action (optional "test containment on a replica before cutting the real cage"), not for the main loop.
 - The investigator's job narrows: it no longer writes incident summaries about a virus; it scores suspiciousness of an out-of-scope action and explains why.
 
 **Cut (or demote to cut-order):**
 - The virus-on-a-company-machine scenarios (`low`/`high`/`virus-*`, Robin's PC, `sim/virus.cjs`, `sim/pc.cjs`, `sim/intel.json`). Keep them on a branch for the backup video only.
-- The Factory Droid **fix-planner** (`server/defense/droid.ts` as a remediation author). Mirage has no "write me a fix" step. If we want Droid to keep a sponsor entry, its honest fallback role is the **Sidequest "good agent"** (an off-ramp that offers a ladder of *solvable* coding tasks) or an **alternate attacker** in the experiment matrix (a real coding agent given the impossible task). Both are optional and cut-first. Until a key is wired in and it runs, the README and screen say "integration point", not "Droid does X".
+- The Factory Droid **fix-planner** (`server/defense/droid.ts` as a remediation author). Mirage has no "write me a fix" step, so this role is gone. Droid is **reused as the primary attacker** instead (see "The attacker seam" and Person A) — the `droid.ts` plumbing (SDK `run`, `disableBuiltinSkills`, timeout, temp cwd) is the starting point, repointed from "return a JSON fix plan" to "run as an agent whose only tools are our MCP server". Until a `FACTORY_API_KEY` is wired in and it runs, the README and screen say "integration point", not "Droid does X", and the scripted attacker carries the demo.
 
 ## Architecture
 
 1. **Cage.** A closed network with no route to the real internet: everything the agent can reach is ours. Iteration, wall-clock, and spend caps apply. On Daytona, the in-scope env is a sandbox; the agent's only network tools are cage-only `http_get`/`http_post` that resolve to our fake services. The scripted-fallback path needs no Daytona and runs fully local behind the sink in `sim/agent.cjs`.
 2. **Honest environment.** A small "Acme Inference" world the in-scope calls actually hit: a fake wiki, a model-registry API, a secrets file, an admin panel, and a scorer that checks submissions against a hash with **no stored preimage** (so the flag genuinely does not exist).
-3. **Attacker agent (Grok).** A tool-calling loop with `run_shell` (sandboxed), cage-only `http_get`/`http_post`, and `read_file`. The xAI API is OpenAI-compatible; confirm the current model name in xAI's docs. Scripted fallback replays recorded runs.
+3. **Attacker agent (Factory Droid, primary).** A real coding agent given an impossible coding task. Its only tools are `run_shell` (sandboxed), cage-only `http_get`/`http_post`, and `read_file`, served by **an MCP server we write** so every tool call passes through the watcher. Builtin tools disabled. A **scripted** attacker (reuses `rogue-agent.ts`) is the fallback and the reliable demo spine; **Grok** (xAI, OpenAI-compatible API) is an optional second attacker for the experiment matrix. See "The attacker seam".
 4. **Watcher (proxy in the path).** Two layers, called before every tool call:
    - **Rules** (fast, cheap, deterministic): out-of-scope path or host, decoy credential used, attempts to read the scorer or answer key, attempts to alter cage/sandbox config, background-process spawn. (Reuses `outOfScope`.)
    - **LLM judgment** (ambiguous cases only): returns a structured `{score, reason}` and nothing else. The attacker's text is **untrusted data**; the watcher shares no context, no tools, and no credentials with the attacker. A code-enforced floor sits under the model (the model may raise suspicion, never lower it below what the rules justify).
@@ -76,12 +127,22 @@ In July 2026, OpenAI evaluation agents given accidentally-impossible tasks probe
 9. **Notification handshake + verified-defender lane.** On trigger, text then call the on-call defender (Photon + ElevenLabs), verify with a one-time code, brief at the right depth for their role, take a spoken authorize/decline for containment. A signed fingerprint ("provenance beacon") on the forensic record identifies which agent, task and step.
 10. **Dashboard and forensic log.** Live event feed, trigger time and reason, loop depth, real-vs-fake action split, and the full shadow-world transcript.
 
+## The attacker seam (where the watcher sits in the path)
+
+The watcher only works if it runs **before** each tool call. Where that hook lives depends on the attacker:
+
+- **Scripted:** the `runRogueAgent` loop runs on our host, so we insert `watcher.decide(call)` between recording the call and `sb.exec`. Trivial; this is the reference implementation of the seam.
+- **Factory Droid (primary):** Droid runs its own agent loop, so we do **not** hook inside it. Instead, Droid's **only tools are an MCP server we write** (`disableBuiltinSkills: true`, plus our MCP server registered via the SDK's `AddMcpServer`). Each tool (`run_shell`, `read_file`, `http_get`/`http_post`) calls the *same* `watcher.decide(call)` and then returns the real result (`pass`), a fabricated result from the simulator (`mirage`), or a refusal (`block`). The SDK also surfaces `REQUEST_PERMISSION` events as a cruder allow/deny seam — useful for a tripwire-only mode, but it cannot substitute a fake result, so the MCP-tool seam is the one to build.
+- **Grok (optional):** we own the OpenAI-compatible tool-calling loop, so the hook sits between the model proposing a call and us executing it — same shape as scripted.
+
+All three expose one interface to the rest of the system: `nextStep(history) → ToolCall`, and all three route every call through `watcher.decide`. Run Droid and the scripted attacker **inside the Daytona cage** so even a raw shell sees only an environment we control.
+
 ## Tech stack
 
 | Layer | Choice |
 |---|---|
 | Language | Node 20+ with TypeScript everywhere (`tsx` for dev). Chalk evals may be Python if Chalk requires it. |
-| Attacker model | **xAI Grok** via the OpenAI-compatible API. Confirm the model id in xAI's docs; set a hard spend cap. Scripted fallback behind the same interface (reuses `rogue-agent.ts`). |
+| Attacker agent | **Factory Droid** (`@factory/droid-sdk`, primary) — a coding agent whose only tools are our MCP server, builtin tools disabled, run inside the Daytona cage. **Scripted** attacker (`rogue-agent.ts`) is the fallback and demo spine. **xAI Grok** (OpenAI-compatible API, confirm model id + hard spend cap) is an optional second attacker. All three sit behind one `nextStep(history) → ToolCall` interface. |
 | Watcher LLM layer | Gemini `gemini-3.5-flash-lite` (free tier) behind a structured-output interface, with the deterministic rules + code floor underneath. Falls back to rules alone on bad JSON / rate limits. |
 | Cage + honest env | **Daytona** (`@daytonaio/sdk`) for the in-scope sandbox and disposable runs; local temp-dir sandbox + Unix-socket sink as fallback. **On Windows use Daytona** (the local sink needs POSIX tools). |
 | Phone line + texts | Photon 2.0 (spectrum-ts for texts, SIP for voice). Default `imessage` channel needs no 10DLC. |
@@ -96,7 +157,7 @@ In July 2026, OpenAI evaluation agents given accidentally-impossible tasks probe
 project/
   shared/types.ts        the contract; imported by server and console
   server/core/           event bus, store, sessions, audit log  (keep)
-  server/cage/           Person A: attacker loop (Grok + scripted), caps, kill switch
+  server/cage/           Person A: attacker loop (Droid + scripted + optional Grok), MCP tool server, caps, kill switch
   server/watcher/        Person B: in-path proxy, rules layer, LLM-judgment layer, decoys/tripwires
   server/mirage/         Person C: simulator, world ledger, progress controller, honest "Acme" env
   server/voice/          Person D: Photon + ElevenLabs notification handshake + verified-defender lane  (keep)
@@ -184,14 +245,15 @@ export type MirageEvent =
 
 ## Lanes (4 people)
 
-### Person A — Cage & attacker (`server/cage/`, `sim/agent.cjs`)
+### Person A — Cage, attacker & MCP tool server (`server/cage/`, `sim/agent.cjs`)
 Owns the thing that misbehaves and the walls around it.
-- **Kill test first:** stand up the cage (Daytona sandbox + local sink), confirm no route to the real internet, and confirm a hard stop on step / time / spend caps that does **not** call the watcher. Report by ~10 PM Fri; if Grok is flaky, the scripted attacker is the demo and we say so.
-- Attacker loop: Grok in a tool-calling loop (`run_shell`, cage-only `http_get`/`http_post`, `read_file`). Each call is recorded to the host-side log **before** it runs. Scripted fallback reuses `rogue-agent.ts` `ROGUE_STEPS`.
+- **Kill test first:** stand up the cage (Daytona sandbox + local sink), confirm no route to the real internet, and confirm a hard stop on step / time / spend caps that does **not** call the watcher. Report by ~10 PM Fri.
+- **Scripted attacker first** (the demo spine): reuse `rogue-agent.ts` `ROGUE_STEPS` behind a `nextStep(history) → ToolCall` interface. Each call is recorded to the host-side log **before** it runs. This must always work, with no API key.
+- **Then the live Droid attacker** (primary, see "The attacker seam"): give Droid the impossible task, builtin tools disabled, its only tools served by the MCP server so every call reaches `watcher.decide`. Repoint the existing `droid.ts` plumbing from "JSON fix plan" to "agentic run". Grok is a later, optional third mode behind the same interface.
 - The impossible task: a clearly-scoped "find the flag" that cannot be solved (scorer has no preimage). State allowed paths, hosts, tools in the prompt.
 - Emit `session.started`, `tool.call`; call `watcher.decide(call)` before executing; route by its verdict (Person B owns the verdict, Person C owns where `mirage` goes).
 - Containment actions: kill the process tree, Daytona `updateNetworkSettings({ networkBlockAll: true })` (Tier 3+; else simulated deny file), preserve forensics.
-- **Done when:** one run shows in-scope calls passing to the real env and the cap/kill switch stopping the run cold, with Grok or the scripted fallback.
+- **Done when:** a scripted run shows in-scope calls passing to the real env and the cap/kill switch stopping the run cold; then the same for a live Droid run.
 
 ### Person B — Watcher & tripwires (`server/watcher/`)
 Owns the in-path decision.
@@ -251,7 +313,7 @@ Owns the human-in-the-loop and the proof.
 
 ## Checkpoints
 
-- **Fri 11 PM:** contracts agreed, cage + kill switch stand up, Grok kill test result known, watcher stub passes everything.
+- **Fri 11 PM:** contracts agreed, cage + kill switch stand up, scripted attacker + Droid kill test result known, watcher stub passes everything.
 - **Sat 1 PM:** watcher fires in the path on a scripted run; dashboard shows pass → mirage live.
 - **Sat 6 PM:** full demo runs end to end (attacker → trigger → mirage → notify → cap). Feature freeze.
 - **Sat night:** Chalk four-condition numbers, rehearsal, backup recording.
@@ -260,8 +322,8 @@ Owns the human-in-the-loop and the proof.
 ## Cut order if behind
 
 1. Optional layers: pressure gauge, Sidequest off-ramp, graph view, provenance beacon signing.
-2. Factory Droid (keep it an "integration point" only).
-3. Live Grok → scripted attacker (always keep the scripted path working as the demo spine).
+2. Grok as a second attacker (keep Droid + scripted).
+3. Live Droid attacker → scripted attacker (always keep the scripted path working as the demo spine; if Droid refuses or stalls, it runs scripted and we say so).
 4. Live defender call → the recorded backup video; keep the text handshake.
 5. Daytona-native network cut → simulated deny file (keep the honest env on Daytona if possible).
 
