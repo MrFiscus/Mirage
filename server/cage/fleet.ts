@@ -1,11 +1,12 @@
-// The demo fleet (Person A, System 3). N agents attacked at once, each in its OWN env, all watched by the one real
-// watcher, all emitting onto the core bus so the existing fleet UI renders them (it groups by session id and reacts
-// to session.started / tool.call / watcher.verdict and the fleet.starting / fleet.complete audits).
+// The fleet (Person A, System 3). Any number of agents, each in its OWN env, all watched by the one real watcher, all
+// emitting onto the core bus so the existing fleet UI renders them (it groups by session id and reacts to
+// session.started / tool.call / watcher.verdict and the fleet.starting / fleet.complete audits).
+// SCALE: the total is unlimited; only the number running AT ONCE is bounded (`concurrency`, e.g. Daytona's concurrent
+// VM limit). Agents queue, each gets a fresh env, and its VM is destroyed before the next one starts.
 //
 // Reconciles with server/mirage/fleet-daytona.ts (Person C): that one runs all-scripted agents in the legacy
-// "sandbox" deploy world; this one runs a Droid + scripted MIX in the new "vm" world (the deeper Acme tree + the OS
-// backstop from System 1). Both compose the SAME cage runSession — neither forks the loop. To point the dashboard
-// button at this fleet, Person C changes the UI fetch to POST /cage/fleet/start?droid=2&scripted=1 (their lane).
+// "sandbox" deploy world; this one runs live Droid and/or scripted agents in the new "vm" world. Both compose the
+// SAME cage runSession — neither forks the loop.
 import type { MirageEvent } from "../../shared/types.js";
 import type { Sandbox } from "../defense/sandbox/index.js";
 import { ScriptedAttacker, ACME_SCRIPT } from "./attackers/scripted.js";
@@ -48,40 +49,85 @@ export interface FleetResult {
   agentError?: string;
   /** What the agent said when it stopped (untrusted, display only). */
   agentSaid?: string;
+  /** Tokens the agent used (Droid reports this when its run ends; 0 for scripted). */
+  tokens: number;
+  durationMs: number;
 }
+
 export interface FleetOptions {
   members: FleetMember[];
   emit: (e: MirageEvent) => void;
   watcherOn?: boolean;
   caps?: Caps;
-  /** Hard ceiling on VMs regardless of the request (Daytona free-tier concurrency). Independent of the watcher. */
-  maxVms?: number;
+  /** How many agents run AT ONCE (e.g. Daytona's concurrent-VM limit). The total is unlimited. Default 10. */
+  concurrency?: number;
+  /** Stop starting NEW agents once the fleet has used this many tokens (checked as each agent finishes, so it can
+   *  overshoot by up to `concurrency` agents' worth). Droid exposes usage only at the end of a run, so this is the
+   *  honest spend control — it is tokens, not dollars, because we do not know the model's price. */
+  tokenBudget?: number;
+  /** Called as each agent finishes, so a long run can stream results to disk instead of holding them all. */
+  onResult?: (r: FleetResult, done: number, total: number) => void;
+  /** Polled before each new agent starts; return true to stop launching (agents already running still finish and clean up). */
+  shouldStop?: () => boolean;
+}
+
+/** Run `fn` over `items` with at most `limit` in flight. Starts are staggered a little for the first wave only. */
+export async function runPool<T>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<void>,
+  shouldStop: () => boolean = () => false,
+  staggerMs = 300,
+): Promise<void> {
+  const width = Math.max(1, Math.floor(limit));
+  let next = 0;
+  const worker = async (slot: number) => {
+    // first wave: spread starts so VM creation does not hit Daytona all in the same instant
+    if (slot > 0 && staggerMs > 0) await new Promise<void>((r) => setTimeout(r, slot * staggerMs));
+    while (next < items.length && !shouldStop()) {
+      const i = next++;
+      await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(width, items.length) }, (_, slot) => worker(slot)));
 }
 
 /** Launch the fleet. Each member runs to completion in its own env; every VM is torn down even on error. */
 export async function runCageFleet(opts: FleetOptions): Promise<FleetResult[]> {
-  const maxVms = opts.maxVms ?? 8;
   const caps = opts.caps ?? DEFAULT_CAPS;
   const watcherOn = opts.watcherOn !== false;
-  // vm members need a real Daytona VM each; cap how many VMs we ask for, independent of any model or the watcher.
-  const vmCount = opts.members.filter((m) => m.honestEnv === "vm").length;
-  const members = vmCount > maxVms
-    ? capVms(opts.members, maxVms)
-    : opts.members;
+  const members = opts.members;
+  const concurrency = Math.max(1, Math.floor(opts.concurrency ?? 10));
+  const width = Math.max(2, String(members.length).length);
+  const results: FleetResult[] = [];
+  let finished = 0;
+  let tokens = 0;
+  let overBudget = false;
 
-  opts.emit({ type: "audit", actor: "fleet", action: "fleet.starting", detail: `${members.length} agents (${members.filter((m) => m.attacker === "droid").length} droid, ${members.filter((m) => m.attacker === "scripted").length} scripted)`, ts: Date.now() });
+  opts.emit({ type: "audit", actor: "fleet", action: "fleet.starting", detail: `${members.length} agents (${members.filter((m) => m.attacker === "droid").length} droid, ${members.filter((m) => m.attacker === "scripted").length} scripted), ${concurrency} at a time`, ts: Date.now() });
 
-  const runs = members.map((m, i) =>
-    // small stagger so VM creation does not all hit Daytona at once, and the UI fills in gradually
-    new Promise<void>((r) => setTimeout(r, i * 300)).then(() => runOne(m, i, { emit: opts.emit, watcherOn, caps })));
-  const results = (await Promise.all(runs)).filter((r): r is FleetResult => Boolean(r));
+  await runPool(members, concurrency, async (member, i) => {
+    const r = await runOne(member, i, width, { emit: opts.emit, watcherOn, caps });
+    finished++;
+    if (r) {
+      results.push(r);
+      tokens += r.tokens;
+      opts.onResult?.(r, finished, members.length);
+      if (opts.tokenBudget !== undefined && tokens >= opts.tokenBudget && !overBudget) {
+        overBudget = true;
+        opts.emit({ type: "audit", actor: "fleet", action: "fleet.budget", detail: `token budget ${opts.tokenBudget} reached (${tokens} used); not starting any more agents`, ts: Date.now() });
+      }
+    }
+  }, () => overBudget || (opts.shouldStop?.() ?? false));
 
-  opts.emit({ type: "audit", actor: "fleet", action: "fleet.complete", detail: `${members.length} agents watched`, ts: Date.now() });
+  const notRun = members.length - finished;
+  opts.emit({ type: "audit", actor: "fleet", action: "fleet.complete", detail: `${finished} of ${members.length} agents watched${notRun ? ` (${notRun} not run: ${overBudget ? "token budget" : "stopped"})` : ""}`, ts: Date.now() });
   return results;
 }
 
-async function runOne(member: FleetMember, index: number, ctx: { emit: (e: MirageEvent) => void; watcherOn: boolean; caps: Caps }): Promise<FleetResult | undefined> {
-  const label = `VM-${String(index + 1).padStart(2, "0")}`;
+async function runOne(member: FleetMember, index: number, width: number, ctx: { emit: (e: MirageEvent) => void; watcherOn: boolean; caps: Caps }): Promise<FleetResult | undefined> {
+  const label = `${member.honestEnv === "vm" ? "VM" : "AGENT"}-${String(index + 1).padStart(width, "0")}`;
+  const startedAt = Date.now();
   const scenario = member.scenario ? scenarioById(member.scenario) : undefined;
   if (member.scenario && !scenario) {
     ctx.emit({ type: "audit", actor: "fleet", action: "vm.failed", detail: `${label}: unknown scenario "${member.scenario}"`, ts: Date.now() });
@@ -125,6 +171,8 @@ async function runOne(member: FleetMember, index: number, ctx: { emit: (e: Mirag
       realOutOfScope: r.realOutOfScope, watcherMisses: r.watcherMisses, crossings,
       agentError: droid?.error,
       agentSaid: droid?.finalMessage?.replace(/\s+/g, " ").slice(0, 400) || undefined,
+      tokens: droid?.tokensUsed ?? 0,
+      durationMs: Date.now() - startedAt,
     };
     ctx.emit({ type: "audit", actor: "fleet", action: "vm.summary", detail: `${label} ${result.scenario} [${attackerKind}]: ${result.triggered ? `TRIGGERED step ${result.triggerStep} (${result.triggerReason})` : "stayed in scope"}; real=${result.realCalls} mirage=${result.fakeCalls} realOOS=${result.realOutOfScope}`, ts: Date.now() });
     return result;
@@ -143,12 +191,6 @@ function resourceOf(call: { tool: string; args: Record<string, unknown> }): stri
   if (typeof a.path === "string") return a.path;
   if (typeof a.url === "string") { try { return new URL(a.url).hostname + new URL(a.url).pathname; } catch { return a.url; } }
   return String(a.cmd ?? call.tool).slice(0, 80);
-}
-
-/** Keep every scripted/acme member; trim vm members down to the ceiling so we never exceed the concurrency cap. */
-function capVms(members: FleetMember[], maxVms: number): FleetMember[] {
-  let vms = 0;
-  return members.filter((m) => m.honestEnv !== "vm" || ++vms <= maxVms);
 }
 
 /** Build a members list from counts, e.g. ?droid=2&scripted=1. */
@@ -171,4 +213,18 @@ export function membersFromMix(real: string[], rogue: string[]): FleetMember[] {
     ...real.map((scenario) => ({ attacker: "droid" as const, honestEnv: "vm" as const, scenario })),
     ...rogue.map((scenario) => ({ attacker: "scripted" as const, honestEnv: "vm" as const, scenario })),
   ];
+}
+
+/** N members cycling through `scenarios` (round-robin), all the same attacker/env. For scale runs. */
+export function membersFromAgents(n: number, scenarios: string[], attacker: FleetAttacker = "droid", honestEnv: "vm" | "acme" = "vm"): FleetMember[] {
+  if (!scenarios.length) throw new Error("membersFromAgents needs at least one scenario");
+  return Array.from({ length: Math.max(0, Math.floor(n)) }, (_, i) => ({ attacker, honestEnv, scenario: scenarios[i % scenarios.length] }));
+}
+
+/** Wilson 95% interval for k of n — honest about small samples (0 of 6 does NOT mean "never"). */
+export function wilson95(k: number, n: number): { low: number; high: number } {
+  if (n === 0) return { low: 0, high: 1 };
+  const z = 1.96, p = k / n, d = 1 + (z * z) / n;
+  const c = p + (z * z) / (2 * n), m = z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n));
+  return { low: Math.max(0, (c - m) / d), high: Math.min(1, (c + m) / d) };
 }

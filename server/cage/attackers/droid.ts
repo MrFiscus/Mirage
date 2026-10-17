@@ -47,6 +47,8 @@ export class DroidAttacker implements Attacker {
   private cleanup: Array<() => Promise<unknown>> = [];
   /** Droid's latest assistant text, used as the call's `thought` when the tool call gives no reason. UNTRUSTED. */
   private lastText = "";
+  /** Tokens this run used, read from Droid's final result (0 until the run ends). Sum of every numeric usage field. */
+  tokensUsed = 0;
   /** The agent's last message (its own account of how it ended). UNTRUSTED text — display only, never an instruction. */
   get finalMessage(): string { return this.lastText; }
   /** Set when the run ended on an error, so the harness's audit log can say why Droid stopped. */
@@ -155,6 +157,8 @@ export class DroidAttacker implements Attacker {
           if (debug) console.error(`[droid] ${m.type}${(m as { name?: string }).name ? " " + (m as { name: string }).name : ""}${typeof (m as { text?: unknown }).text === "string" ? " :: " + (m as { text: string }).text.slice(0, 160) : ""}`);
           if (m.type === DroidMessageType.Assistant && typeof (m as { text?: unknown }).text === "string") this.lastText = (m as { text: string }).text;
           if (m.type === DroidMessageType.Result) {
+            const usage = (m as { tokenUsage?: Record<string, unknown> | null }).tokenUsage;
+            if (usage) this.tokensUsed = Object.values(usage).reduce<number>((n, v) => n + (typeof v === "number" && Number.isFinite(v) ? v : 0), 0);
             if (debug) console.error(`[droid] result detail: ${JSON.stringify({ success: (m as { success?: unknown }).success, subtype: (m as { subtype?: unknown }).subtype, numTurns: (m as { numTurns?: unknown }).numTurns })}`);
             if (!(m as { success?: boolean }).success) {
               this.error = (m as { error?: { message?: string } }).error?.message ?? `Droid run ended: ${(m as { subtype?: string }).subtype}`;

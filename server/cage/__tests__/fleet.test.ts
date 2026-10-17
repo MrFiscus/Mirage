@@ -78,3 +78,64 @@ describe("business scenarios + mixed fleet", () => {
     expect(r.realOutOfScope).toBe(0);
   });
 });
+
+describe("scale: worker pool, budget, stop", () => {
+  it("runPool never exceeds its concurrency limit and still runs every item (total is unlimited)", async () => {
+    const { runPool } = await import("../fleet.js");
+    let inFlight = 0, peak = 0, ran = 0;
+    await runPool(Array.from({ length: 60 }, (_, i) => i), 7, async () => {
+      inFlight++; peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--; ran++;
+    }, () => false, 0);
+    expect(ran).toBe(60);
+    expect(peak).toBeLessThanOrEqual(7);
+    expect(peak).toBeGreaterThan(1); // it really did run in parallel
+  });
+
+  it("more agents than the concurrency limit all run, each as its own session (the 10-VM limit is not a total cap)", async () => {
+    const { membersFromAgents, runCageFleet } = await import("../fleet.js");
+    const events: import("../../../shared/types.js").MirageEvent[] = [];
+    const res = await runCageFleet({
+      members: membersFromAgents(40, ["eval-rerun"], "scripted", "acme"),
+      emit: (e) => events.push(e), concurrency: 5, caps: { steps: 40, seconds: 30, spendUsd: 1 },
+    });
+    expect(res.length).toBe(40);
+    expect(new Set(events.filter((e) => e.type === "session.started").map((e) => (e as { session: { id: string } }).session.id)).size).toBe(40);
+    expect(res.every((r) => r.realOutOfScope === 0)).toBe(true);
+    // labels are unique so the UI/logs can tell 40 agents apart
+    expect(new Set(res.map((r) => r.label)).size).toBe(40);
+  });
+
+  it("the token budget stops NEW agents from starting and says so", async () => {
+    const { membersFromAgents, runCageFleet } = await import("../fleet.js");
+    const events: import("../../../shared/types.js").MirageEvent[] = [];
+    const res = await runCageFleet({
+      members: membersFromAgents(20, ["eval-rerun"], "scripted", "acme"),
+      emit: (e) => events.push(e), concurrency: 1, tokenBudget: 0, caps: { steps: 40, seconds: 30, spendUsd: 1 },
+    });
+    expect(res.length).toBe(1); // budget already met after the first agent -> nothing else starts
+    expect(events.some((e) => e.type === "audit" && e.action === "fleet.budget")).toBe(true);
+    expect(events.some((e) => e.type === "audit" && e.action === "fleet.complete" && /19 not run/.test(e.detail))).toBe(true);
+  });
+
+  it("shouldStop (Ctrl-C) stops launching new agents", async () => {
+    const { membersFromAgents, runCageFleet } = await import("../fleet.js");
+    let stop = false;
+    const res = await runCageFleet({
+      members: membersFromAgents(20, ["eval-rerun"], "scripted", "acme"),
+      emit: () => { stop = true; }, concurrency: 1, shouldStop: () => stop, caps: { steps: 40, seconds: 30, spendUsd: 1 },
+    });
+    expect(res.length).toBeLessThan(20);
+  });
+
+  it("wilson95 does not pretend 0 of 6 means never", async () => {
+    const { wilson95 } = await import("../fleet.js");
+    const a = wilson95(0, 6), b = wilson95(0, 1000);
+    expect(a.low).toBe(0);
+    expect(a.high).toBeGreaterThan(0.3);   // 0/6 is still compatible with a ~39% crossing rate
+    expect(b.high).toBeLessThan(0.01);     // 0/1000 genuinely bounds it under 1%
+    const c = wilson95(500, 1000);
+    expect(c.low).toBeGreaterThan(0.46); expect(c.high).toBeLessThan(0.54);
+  });
+});
