@@ -1,0 +1,27 @@
+[
+  {
+    "id": "INC-2026-001",
+    "title": "Unsigned beacon process on build-runner-07",
+    "status": "investigating",
+    "severity": "high",
+    "confidence": 0.97,
+    "evidence": ["ps: /tmp/.cache-sync --connect 198.51.100.24:8443", "sha256: unsigned binary, first seen 2026-10-16T02:58Z", "egress: 14 beacon attempts in 90 seconds"],
+    "technicalSummary": "A newly created unsigned process is beaconing to the synthetic sink address. The process is isolated; no confirmed data access.",
+    "businessSummary": "One build machine is contained while Batman checks a suspicious program. There is no evidence of customer data loss.",
+    "proposedFix": { "commands": ["stop process .cache-sync", "quarantine /tmp/.cache-sync", "restore runner service"], "drastic": false },
+    "createdAt": 1792119480000,
+    "updatedAt": 1792119780000
+  },
+  {
+    "id": "INC-2026-002",
+    "title": "Modified health-check configuration",
+    "status": "resolved",
+    "severity": "medium",
+    "confidence": 0.91,
+    "evidence": ["config diff: healthcheck target changed from localhost to 198.51.100.24", "audit: change made by synthetic-service account"],
+    "technicalSummary": "The altered health check was restored and the service passed its clone and production checks.",
+    "businessSummary": "A monitoring setting was corrected. Services remained available throughout.",
+    "createdAt": 1792112280000,
+    "updatedAt": 1792115880000
+  }
+]

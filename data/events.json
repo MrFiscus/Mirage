@@ -1,0 +1,7 @@
+[
+  { "id": "evt-001", "label": "benign", "signal": "scheduled health check from localhost" },
+  { "id": "evt-002", "label": "virus", "signal": "unsigned process with repeated beacon attempts" },
+  { "id": "evt-003", "label": "near_miss", "signal": "new binary blocked before execution" },
+  { "id": "evt-004", "label": "benign", "signal": "approved dependency update" },
+  { "id": "evt-005", "label": "virus", "signal": "modified service configuration with external target" }
+]
