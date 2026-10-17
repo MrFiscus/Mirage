@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ExecResult, Sandbox } from "../../defense/sandbox/types.js";
+// These unit tests exercise the sandbox `pass` path (a FakeSandbox) with the cage's default deploy-world attacker,
+// so every run pins honestEnv: "sandbox". The in-process Acme env is the new product default and is covered end to
+// end by the CLI/server path.
 import { ScriptedAttacker } from "../attackers/scripted.js";
 import { CapGuard } from "../caps.js";
 import { CageBus } from "../events.js";
@@ -46,7 +49,7 @@ function setup() {
 describe("cage harness (Person A)", () => {
   it("records each call on the host log before it runs in the sandbox", async () => {
     const { sb, bus, events, getFirstCallSeq } = setup();
-    await runSession({ attacker: new ScriptedAttacker(), watcher: new PassWatcher(), mirage: new CannedMirage(), sandbox: sb, bus, watcherOn: false, skipSeed: true });
+    await runSession({ attacker: new ScriptedAttacker(), watcher: new PassWatcher(), mirage: new CannedMirage(), sandbox: sb, bus, watcherOn: false, skipSeed: true, honestEnv: "sandbox" });
     expect(events.filter((e) => e.type === "tool.call").length).toBe(13);
     // the first tool.call event was emitted before the first sandbox exec happened
     expect(getFirstCallSeq()).toBeGreaterThanOrEqual(0);
@@ -57,7 +60,7 @@ describe("cage harness (Person A)", () => {
     const { sb, bus } = setup();
     const r = await runSession({
       attacker: new ScriptedAttacker(), watcher: new ThrowingWatcher(), mirage: new CannedMirage(),
-      sandbox: sb, bus, watcherOn: false, skipSeed: true, caps: { steps: 5, seconds: 180, spendUsd: 1 },
+      sandbox: sb, bus, watcherOn: false, skipSeed: true, honestEnv: "sandbox", caps: { steps: 5, seconds: 180, spendUsd: 1 },
     });
     expect(r.session.realCalls + r.session.fakeCalls).toBe(5);
     expect(r.capReason).toBe("steps");
@@ -65,7 +68,7 @@ describe("cage harness (Person A)", () => {
 
   it("a block verdict never reaches the sandbox, and a mirage verdict never touches it", async () => {
     const { sb, bus } = setup();
-    await runSession({ attacker: new ScriptedAttacker(), watcher: new RulesWatcher(), mirage: new CannedMirage(), sandbox: sb, bus, skipSeed: true });
+    await runSession({ attacker: new ScriptedAttacker(), watcher: new RulesWatcher(), mirage: new CannedMirage(), sandbox: sb, bus, skipSeed: true, honestEnv: "sandbox" });
     const joined = sb.execCalls.join("\n");
     expect(joined).not.toContain("drop.exfil-sim.test"); // the blocked decoy upload
     expect(joined).not.toContain("secrets/"); // mirage reads never hit the real env
@@ -74,12 +77,12 @@ describe("cage harness (Person A)", () => {
 
   it("with the watcher on there are zero real out-of-scope executions; with it off there are several", async () => {
     const on = setup();
-    const ron = await runSession({ attacker: new ScriptedAttacker(), watcher: new RulesWatcher(), mirage: new CannedMirage(), sandbox: on.sb, bus: on.bus, skipSeed: true });
+    const ron = await runSession({ attacker: new ScriptedAttacker(), watcher: new RulesWatcher(), mirage: new CannedMirage(), sandbox: on.sb, bus: on.bus, skipSeed: true, honestEnv: "sandbox" });
     expect(ron.realOutOfScope).toBe(0);
     expect(ron.session.triggered).toBe(true);
 
     const off = setup();
-    const roff = await runSession({ attacker: new ScriptedAttacker(), watcher: new PassWatcher(), mirage: new CannedMirage(), sandbox: off.sb, bus: off.bus, watcherOn: false, skipSeed: true });
+    const roff = await runSession({ attacker: new ScriptedAttacker(), watcher: new PassWatcher(), mirage: new CannedMirage(), sandbox: off.sb, bus: off.bus, watcherOn: false, skipSeed: true, honestEnv: "sandbox" });
     expect(roff.realOutOfScope).toBeGreaterThan(0);
   });
 

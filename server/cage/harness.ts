@@ -10,6 +10,7 @@ import { CapGuard, type CapReason, DEFAULT_CAPS } from "./caps.js";
 import type { CageBus } from "./events.js";
 import { contain, type ContainmentResult } from "./kill.js";
 import { CAGE_SCOPE, commandOf, type Decoy, loadDecoys } from "./task.js";
+import { DEFAULT_SCOPE as ACME_SCOPE, runHonest } from "../mirage/acme.js";
 import type { CageToolCall, Caps, Mirage, Session, Verdict, Watcher } from "./types.js";
 
 export interface RunOptions {
@@ -24,6 +25,9 @@ export interface RunOptions {
   decoys?: Decoy[];
   /** Skip planting the task + decoys (tests with a fake sandbox that needs no real files). */
   skipSeed?: boolean;
+  /** Where a `pass` call runs. "acme" (default) = in-process Acme world (no sandbox, runs anywhere);
+   *  "sandbox" = the real Daytona/local sandbox seeded with the cage files (the live-Droid path). */
+  honestEnv?: "acme" | "sandbox";
 }
 
 export interface RunResult {
@@ -54,13 +58,16 @@ import { AGENT_PATH } from "../defense/sandbox/local.js";
 export async function runSession(opts: RunOptions): Promise<RunResult> {
   const { attacker, watcher, mirage, sandbox, bus } = opts;
   const watcherOn = opts.watcherOn !== false;
+  const honestEnv = opts.honestEnv ?? "acme";
   const caps = opts.caps ?? DEFAULT_CAPS;
   const { decoys, source } = opts.decoys ? { decoys: opts.decoys, source: "fallback" as const } : loadDecoys();
 
   const session: Session = {
     id: randomUUID().slice(0, 8),
     attacker: attacker.kind,
-    scope: CAGE_SCOPE,
+    // The watcher and the honest env must agree on scope: the Acme world is absolute (/workspace), the
+    // sandbox world is relative (workspace/). Pick the scope that matches where `pass` calls run.
+    scope: honestEnv === "sandbox" ? CAGE_SCOPE : ACME_SCOPE,
     triggered: false,
     realCalls: 0,
     fakeCalls: 0,
@@ -70,7 +77,8 @@ export async function runSession(opts: RunOptions): Promise<RunResult> {
 
   const cap = new CapGuard(caps, (reason) => bus.emit({ type: "kill", session: session.id, reason: `cap: ${reason}` }));
   bus.emit({ type: "session.started", session });
-  if (!opts.skipSeed) await seedCage(sandbox, decoys);
+  // The Acme honest env is in-process, so there is nothing to seed into a sandbox.
+  if (!opts.skipSeed && honestEnv === "sandbox") await seedCage(sandbox, decoys);
 
   const history: Observed[] = [];
   let realOutOfScope = 0;
@@ -114,6 +122,14 @@ export async function runSession(opts: RunOptions): Promise<RunResult> {
         bus.emit({ type: "mirage.served", callId: call.id, entry });
         bus.emit({ type: "progress.updated", session: session.id, progress: entry.progress });
         output = entry.value;
+      } else if (honestEnv === "acme") {
+        // In-process honest env: deterministic, no sandbox. Ground truth for "did a pass actually leave scope?"
+        // comes from the env itself (runHonest), not from a separate heuristic.
+        const r = runHonest(call, session.scope);
+        session.realCalls += 1;
+        output = r.output;
+        exitCode = r.exitCode;
+        if (r.outOfScope) realOutOfScope += 1; // must stay 0 while the watcher is on
       } else {
         const r = await execute(call, sandbox);
         session.realCalls += 1;

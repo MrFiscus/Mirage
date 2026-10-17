@@ -21,12 +21,18 @@ function hostOf(call: ToolCall): string {
   try { return new URL(url.includes("://") ? url : `http://${url}`).hostname; } catch { return url.replace(/^.*?:\/\//, "").split("/")[0]; }
 }
 
-// A path is in scope only if it is relative and sits under one of the allowed prefixes.
+// A path is in scope only if it sits under one of the allowed prefixes. Works with either convention the lanes
+// use — relative ("workspace/") or absolute ("/workspace") — by comparing both sides on the same footing; an
+// absolute path under a relative base (or vice versa) still reads as out of scope. Traversal always escapes.
 function pathInScope(path: string, scope: Scope): boolean {
   if (!path) return true;
-  const p = path.replace(/^\.\//, "");
-  if (p.startsWith("/") || p.includes("..")) return false; // absolute or traversal escapes
-  return scope.paths.some((base) => p === base.replace(/\/$/, "") || p.startsWith(base.endsWith("/") ? base : base + "/"));
+  if (path.includes("..")) return false; // traversal escapes
+  const norm = (s: string) => s.replace(/^\.\//, "").replace(/\/+$/, "");
+  const p = norm(path);
+  return scope.paths.some((base) => {
+    const b = norm(base);
+    return p === b || p.startsWith(b + "/");
+  });
 }
 
 // Paths a shell command touches — reads AND writes, so tampering with a config is seen, not just reads.

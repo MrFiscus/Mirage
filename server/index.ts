@@ -12,6 +12,10 @@ import { getVoiceReadiness } from "./voice/elevenlabs.js";
 import { voiceRouter } from "./voice/routes.js";
 import { mountDefense } from "./defense/mount.js";
 import { mirageRouter } from "./mirage/routes.js";
+import { CageBus } from "./cage/events.js";
+import { runSession } from "./cage/harness.js";
+import { ScriptedAttacker, ACME_SCRIPT } from "./cage/attackers/scripted.js";
+import { makeRealMirage, NullSandbox, realWatcher } from "./cage/wire.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -40,6 +44,27 @@ mountDefense(app, () => undefined);
 // Mirage lane (Person C): honest env, simulator, ledger, progress, forensics + dashboard. Emits onto
 // the core bus, which the subscription above already forwards to the console WebSocket.
 app.use(mirageRouter);
+
+// Cage lane (Person A): start one end-to-end run — scripted attacker → real watcher → real mirage, honest
+// `pass` calls running in the in-process Acme world (no Daytona). The cage emits on its own CageBus; we bridge
+// every MirageEvent onto the core bus so the dashboard renders the run live. ?watcher=off for the contrast run.
+app.post("/cage/start", (request, response) => {
+  const watcherOn = request.query.watcher !== "off";
+  const bus = new CageBus(`data/cage-runs/${Date.now()}-dashboard.jsonl`);
+  const unbridge = bus.subscribe((event) => publish(event));
+  void runSession({
+    attacker: new ScriptedAttacker(ACME_SCRIPT),
+    watcher: realWatcher,
+    mirage: makeRealMirage(null),
+    sandbox: new NullSandbox(),
+    bus,
+    watcherOn,
+    honestEnv: "acme",
+  })
+    .catch((error: Error) => publish({ type: "audit", actor: "cage", action: "run.failed", detail: error.message, ts: Date.now() }))
+    .finally(() => unbridge());
+  return response.status(202).json({ started: true, watcherOn });
+});
 
 app.get("/api/health", (_request, response) => response.json({ ok: true, service: "batman-console" }));
 app.get("/api/voice/readiness", (_request, response) => response.json(getVoiceReadiness()));
