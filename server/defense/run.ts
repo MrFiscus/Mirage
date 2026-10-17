@@ -29,8 +29,12 @@ const traces = new Map<string, { startedAt: number; steps: TraceStep[] }>();
 
 export function traceStart(id: string): void { traces.set(id, { startedAt: Date.now(), steps: [] }); }
 export function traceStep(id: string, kind: string, data: Record<string, unknown> = {}, ms?: number): void {
-  traces.get(id)?.steps.push({ kind, at: Date.now(), ms, data });
+  const t = traces.get(id);
+  t?.steps.push({ kind, at: Date.now(), ms, data });
+  // Visible in the `npm run dev` terminal, so a stalled run shows where it stopped.
+  console.log(`[batman] ${id} ${t ? `+${((Date.now() - t.startedAt) / 1000).toFixed(1)}s` : ""} ${kind}${ms != null ? ` (${ms} ms)` : ""}${kind === "failed" ? `: ${String(data.message)}` : ""}`);
 }
+export const lastStepKind = (id: string) => traces.get(id)?.steps.at(-1)?.kind ?? "start";
 export const getTrace = (id: string) => traces.get(id);
 
 /** Times an async step and records it. */

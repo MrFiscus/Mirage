@@ -5,8 +5,8 @@ import { decide } from "./decision.js";
 import type { Investigator } from "./investigator.js";
 import { createInvestigator } from "./investigators.js";
 import { ScriptedPlanner, type FixPlanner } from "./planner.js";
-import { createCompanyMachine, VIRUS_PATH } from "./sandbox/index.js";
-import { audit, runs, timed, traceStart, traceStep, update } from "./run.js";
+import { createCompanyMachine, VIRUS_PATH, type Sandbox } from "./sandbox/index.js";
+import { audit, lastStepKind, runs, timed, traceStart, traceStep, update } from "./run.js";
 import { sendSms } from "./core.js";
 import { collectTelemetry, QUERIES, type Telemetry } from "./telemetry.js";
 import { severityFloor } from "./investigator.js";
@@ -19,13 +19,34 @@ export interface ScenarioDeps {
 
 export const newIncidentId = (scenario: string) => `inc-${scenario}-${Date.now().toString(36)}`;
 
+const RUN_LIMIT_MS = 180_000;
+
 /** Runs the loop up to the decision. Returns the incident; if it is awaiting_approval, call approve() next. */
 export async function startScenario(scenario: string, deps: ScenarioDeps = {}, id = newIncidentId(scenario)): Promise<Incident> {
+  traceStart(id);
+  traceStep(id, "started", { tier: scenario });
+  const machines: Sandbox[] = [];
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const limit = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`timed out after ${RUN_LIMIT_MS / 1000} s, during "${lastStepKind(id)}"`)), RUN_LIMIT_MS); });
+    return await Promise.race([runScenario(scenario, deps, id, machines), limit]);
+  } catch (e) {
+    // Record where it failed, then delete every machine this run created so nothing is left running.
+    traceStep(id, "failed", { message: (e as Error).message, after: lastStepKind(id) });
+    runs.delete(id);
+    await Promise.all(machines.map((m) => m.destroy().catch(() => undefined)));
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function runScenario(scenario: string, deps: ScenarioDeps, id: string, machines: Sandbox[]): Promise<Incident> {
   const investigator = deps.investigator ?? createInvestigator();
   const planner = deps.planner ?? new ScriptedPlanner();
 
-  traceStart(id);
   const company = await timed(id, "machine.created", () => createCompanyMachine(), (m) => ({ id: m.id, backend: process.env.SANDBOX_BACKEND === "daytona" ? "daytona" : "local" }));
+  machines.push(company);
   audit("scenario.start", `scenario ${scenario}; company machine ${company.id} created`);
   const baseline = await collectTelemetry(company);
   const unhealthy = baseline.health.filter((c) => !c.passed);
@@ -53,6 +74,7 @@ export async function startScenario(scenario: string, deps: ScenarioDeps = {}, i
   audit("fix.planned", `${planner.name ?? "planner"}: ${plan.commands.length} step${plan.commands.length === 1 ? "" : "s"}, ${plan.drastic ? "major change" : "minor change"}`);
   update(incident, { status: "testing_fix", proposedFix: plan });
   const clone = await timed(id, "clone.created", () => company.clone(), (c) => ({ id: c.id }));
+  machines.push(clone);
   runs.get(incident.id)!.clone = clone;
   audit("clone.created", `clone ${clone.id} created`);
   const report = await timed(id, "clone.checked", () => runCloneCheck(clone, plan.commands), (r) => ({ before: r.before, checks: r.cloneCheck.checks, passed: r.cloneCheck.passed, remaining: r.remaining, commandFailures: r.commandFailures }));

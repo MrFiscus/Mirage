@@ -46,19 +46,20 @@ function slides() {
       case "human": out.push({ key: "human", who: "analyst", title: d.action === "approved" ? "The analyst approves the fix" : "The analyst rejects the fix", at: at(s), d }); break;
       case "applied": out.push({ key: "applied", who: "batman", title: "The fix is applied to the real machine", at: at(s), ms: s.ms, d }); break;
       case "verified": out.push({ key: "verified", who: "daytona", title: "The real machine is re-checked", at: at(s), ms: s.ms, d }); break;
+      case "failed": out.push({ key: "failed", who: "batman", title: "This run stopped with an error", at: at(s), d }); break;
     }
   }
   // While the engine waits for a person, show an approval slide with buttons.
   const decision = t.steps.find((s) => s.kind === "decision");
   const human = t.steps.find((s) => s.kind === "human");
   if (decision?.data.action === "await_approval" && !human) out.push({ key: "approve", who: "analyst", title: "Waiting for an analyst", at: at(decision), d: {} });
-  if (finished()) out.push({ key: "summary", who: "batman", title: "How long that really took", d: {} });
+  if (finished() && !t.steps.some((s) => s.kind === "failed")) out.push({ key: "summary", who: "batman", title: "How long that really took", d: {} });
   return out;
 }
 
 function finished() {
   const k = new Map((state.trace?.steps ?? []).map((s) => [s.kind, s]));
-  return k.has("verified") || k.get("decision")?.data.action === "reject" || k.get("human")?.data.action === "rejected";
+  return k.has("verified") || k.has("failed") || k.get("decision")?.data.action === "reject" || k.get("human")?.data.action === "rejected";
 }
 
 /* ---------- slide bodies ---------- */
@@ -142,6 +143,8 @@ function body(sl) {
     case "verified": return `<p class="why">Batman runs every check again on the real machine.</p>
       <div class="verdict ${d.clean ? "ok" : "bad"}">${d.clean ? "Clean. The ticket is resolved." : "Problems remain."}</div>`;
     case "summary": return summary();
+    case "failed": return `<div class="verdict bad">Stopped after the "${esc(d.after)}" step<small>${esc(d.message)}</small></div>
+      <p class="note">Any machines this run created have been deleted. The terminal running <code>npm run dev</code> shows each step as it happens; check it, then pick an alert to try again.</p>`;
     default: return "";
   }
 }
