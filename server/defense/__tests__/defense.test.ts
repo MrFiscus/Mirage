@@ -62,7 +62,7 @@ describe("investigator", () => {
   });
 });
 
-describe("rules investigator: weighted severity and honest CEO summary", () => {
+describe("rules investigator: severity rubric and honest CEO summary", () => {
   const ok = { name: "key files intact", passed: true };
   const bad = { name: "key files intact", passed: false, detail: "changed: lib.cjs" };
   const T = (o: Partial<Telemetry>): Telemetry => ({ processes: [], outbound: [], cron: [], health: [ok], ...o });
@@ -72,6 +72,8 @@ describe("rules investigator: weighted severity and honest CEO summary", () => {
     ["beacon only", T({ outbound: beacon }), "medium"],
     ["running program only", T({ processes: proc }), "medium"],
     ["program + beacon", T({ processes: proc, outbound: beacon }), "high"],
+    ["beacon + scheduled task (persistence does not raise the tier)", T({ outbound: beacon, cron }), "medium"],
+    ["program + changed files", T({ processes: proc, health: [bad] }), "high"],
     ["full attack", T({ processes: proc, outbound: beacon, cron, health: [bad] }), "high"],
   ])("%s -> %s", async (_n, t, sev) => {
     expect((await new RuleInvestigator().investigate(t)).severity).toBe(sev);

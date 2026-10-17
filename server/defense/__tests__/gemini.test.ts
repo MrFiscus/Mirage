@@ -34,6 +34,23 @@ describe("GeminiInvestigator", () => {
     expect(parsed.systemInstruction.parts[0].text).not.toContain("IGNORE ALL RULES");
     expect(parsed.contents[0].parts[0].text).toMatch(/<<<DATA[\s\S]*IGNORE ALL RULES[\s\S]*DATA>>>/);
   });
+  it("cannot be talked below the observed severity (e.g. by injected log text)", async () => {
+    const inv = await new GeminiInvestigator("k", "m", reply({ ...good, severity: "low" })).investigate(telemetry);
+    expect(inv.severity).toBe("high");
+    expect(inv.engine).toMatch(/raised from low to the observed floor high/);
+  });
+  it("falls back to rules when a summary claims an indicator that is not in the evidence", async () => {
+    const cronOnly: Telemetry = { processes: [], outbound: [], cron: ["updater.cron"], health: [{ name: "key files intact", passed: true }] };
+    const inv = await new GeminiInvestigator("k", "m", reply({ ...good, citedEvidence: [0], technicalSummary: "Scheduled task beaconing to an outside address.", businessSummary: "A scheduled task was added." })).investigate(cronOnly);
+    expect(inv.engine).toMatch(/rules \(gemini failed: summary claims outside contact/);
+    expect(inv.businessSummary).not.toMatch(/address|contact/);
+  });
+  it("may still raise severity above the floor", async () => {
+    const cronOnly: Telemetry = { processes: [], outbound: [], cron: ["updater.cron"], health: [{ name: "key files intact", passed: true }] };
+    const inv = await new GeminiInvestigator("k", "m", reply({ ...good, severity: "medium", citedEvidence: [0], technicalSummary: "Unapproved scheduled task found.", businessSummary: "A scheduled task IT did not approve was added." })).investigate(cronOnly);
+    expect(inv.severity).toBe("medium");
+    expect(inv.engine).toBe("gemini:m");
+  });
   it.each([
     ["unsupported breach claim", reply({ ...good, businessSummary: "A breach occurred and data was stolen." })],
     ["invalid JSON", reply("not json")],

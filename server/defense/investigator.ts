@@ -33,15 +33,42 @@ export function buildEvidence(t: Telemetry): Evidence {
   return { evidence, findings, indicators: signalCount(s) };
 }
 
-/** Weighted so a running program that beacons out rates high, while a lone scheduled task stays low. */
-export const SIGNAL_WEIGHTS = { unknownOutbound: 3, rogueProcess: 2, integrityFailed: 2, cronPersistence: 1 } as const;
-
-export function weightedScore(t: Telemetry): number {
+/**
+ * Serious signals: a running unknown program, contact with an unknown address, changed key files.
+ * Two or more together is high; one is medium; only an unapproved scheduled task is low.
+ * A scheduled task adds persistence (and confidence) but never raises the tier on its own.
+ */
+export function seriousSignals(t: Telemetry): number {
   const s = signalsFrom(t);
-  return (s.unknownOutbound.length ? SIGNAL_WEIGHTS.unknownOutbound : 0)
-    + (s.rogueProcess ? SIGNAL_WEIGHTS.rogueProcess : 0)
-    + (s.integrityFailed ? SIGNAL_WEIGHTS.integrityFailed : 0)
-    + (s.cronPersistence ? SIGNAL_WEIGHTS.cronPersistence : 0);
+  return Number(s.rogueProcess) + Number(s.unknownOutbound.length > 0) + Number(s.integrityFailed);
+}
+
+const ORDER: Incident["severity"][] = ["low", "medium", "high"];
+
+/** Severity justified by what was observed. The rules investigator uses it as is; Gemini may only raise it. */
+export function severityFloor(t: Telemetry): Incident["severity"] {
+  const serious = seriousSignals(t);
+  return serious >= 2 ? "high" : serious === 1 ? "medium" : "low";
+}
+export const maxSeverity = (a: Incident["severity"], b: Incident["severity"]) => (ORDER.indexOf(a) >= ORDER.indexOf(b) ? a : b);
+
+// What a summary sentence claims, and the signal that must be present for the claim to be supported.
+const CLAIMS: { pattern: RegExp; present: (s: ReturnType<typeof signalsFrom>) => boolean; what: string }[] = [
+  { pattern: /\bprogram\b|\bprocess\b/i, present: (s) => s.rogueProcess, what: "a running program" },
+  { pattern: /\bcontact|\baddress\b|\bconnection\b|\bbeacon/i, present: (s) => s.unknownOutbound.length > 0, what: "outside contact" },
+  { pattern: /\bscheduled\b|\bcron\b|come back/i, present: (s) => s.cronPersistence, what: "a scheduled task" },
+  { pattern: /\bfile/i, present: (s) => s.integrityFailed, what: "changed files" },
+];
+
+/** Claims in `text` that the telemetry does not support. Parenthesised text is treated as a legend, not a claim. */
+export function unsupportedClaims(text: string, t: Telemetry): string[] {
+  const s = signalsFrom(t);
+  const out = new Set<string>();
+  for (const sentence of text.split(/(?<=\.)\s+/)) {
+    const claimText = sentence.replace(/\([^)]*\)/g, "");
+    for (const c of CLAIMS) if (c.pattern.test(claimText) && !c.present(s)) out.add(c.what);
+  }
+  return [...out];
 }
 
 /** CEO-level sentence built only from what was actually found. */
@@ -62,12 +89,13 @@ export function plainFindings(t: Telemetry): string {
 export class RuleInvestigator implements Investigator {
   async investigate(t: Telemetry): Promise<Investigation> {
     const { evidence, findings, indicators: n } = buildEvidence(t);
-    const score = weightedScore(t);
-    const severity: Incident["severity"] = score >= 4 ? "high" : score >= 2 ? "medium" : "low";
-    const confidence = Math.min(0.97, Number((0.45 + 0.07 * score).toFixed(2)));
+    const serious = seriousSignals(t);
+    const persistence = signalsFrom(t).cronPersistence;
+    const severity = severityFloor(t);
+    const confidence = Math.min(0.97, Number((0.5 + 0.15 * serious + (persistence ? 0.05 : 0)).toFixed(2)));
     return {
       engine: "rules", severity, confidence, evidence,
-      technicalSummary: `${n} of 4 indicators present (process, outbound, cron persistence, file integrity); weighted score ${score} of 8. Findings: ${findings.join("; ")}. Evidence is cited below. Data loss has not been confirmed by any query.`,
+      technicalSummary: `${n} of 4 indicators present (process, outbound, cron persistence, file integrity); ${serious} serious (program, outbound, file integrity). Findings: ${findings.join("; ")}. Evidence is cited below. Data loss has not been confirmed by any query.`,
       businessSummary: `${plainFindings(t)} We have not confirmed any data loss. Batman is testing a fix on a copy of the machine first; nothing on the live system changes until that test passes.`,
     };
   }

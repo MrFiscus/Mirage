@@ -144,7 +144,7 @@ Done, tested, on `main`:
 - Loop: simulated virus, alert, read-only queries, investigator (Gemini or rules), scripted fix plan, test on a clone with health checks before/after, decision rule, approve/reject, apply, verify clean.
 - Engine uses the real core (`server/core`) through `server/defense/core.ts`; `mountDefense()` in `server/index.ts` mounts routes and `/demo`.
 - Routes: `POST /defense/scenario/:id/start` (returns at once; progress arrives as ConsoleEvents), `POST /defense/approve` `{incidentId, phone}`, `POST /defense/demo-approve/:id`, `POST /defense/demo-reject/:id`, `GET /defense/info`.
-- Tests: `npm test` (36): engine, weighted severity table, fix-plan portability, both sandbox backends, Gemini failure modes with mocked network, and voice tools reading real defense incidents (role views, refusals, lockout).
+- Tests: `npm test` (41): engine, severity rubric table, Gemini severity floor and claim guard, fix-plan portability, both sandbox backends, Gemini failure modes with mocked network, and voice tools reading real defense incidents (role views, refusals, lockout).
 
 Config (`.env`, gitignored; names in `.env.example`):
 - `SANDBOX_BACKEND=daytona` + `DAYTONA_API_KEY`. Default is local. **On Windows use Daytona**: the local sandbox needs Linux tools (`sh`, `ps`, `grep`).
@@ -153,14 +153,18 @@ Config (`.env`, gitignored; names in `.env.example`):
 
 Findings:
 - Daytona native fork is not available on our account. The clone is a second sandbox that replays the first one's files and running program. Create is about 1.5 s; a full run is about 8 to 15 s.
-- Rules investigator severity is weighted, not counted: outbound to an unknown address 3, running unknown program 2, changed key files 2, unapproved scheduled task 1; score 4+ high, 2+ medium. Program plus beacon now rates high; a lone scheduled task stays low.
+- Rules investigator severity follows the eval rubric (`evals/build-cases.ts`): two or more serious signals (running unknown program, contact with an unknown address, changed key files) is high, one is medium, only an unapproved scheduled task is low. The scheduled task adds confidence but never raises the tier.
 - The CEO summary from the rules investigator is built from what was actually found (a scheduled-task-only alert no longer mentions a program or an address).
 - Fix commands avoid `sed -i` (it fails on macOS); the network-log cleanup uses `grep -v … > tmp && mv`.
+- Eval (`npm run eval`, Person 3's harness, 65 cases): before these fixes the rules investigator scored severity 60% with 33 unsupported summary claims. Now: **rules** severity 100%, unsupported claims 0; **Gemini** (`EVAL_INVESTIGATOR=gemini`) severity 100%, unsupported claims 0. Detection 91.8% precision / 100% recall (4 false alarms are IT-approved jobs with no allowlist; not fixed). Fix safety 12/12, 6/6, 5/5; disclosure 17/17.
+  - Be honest about where Gemini's 100% comes from. Over the 45 alerts, Gemini's own severity was right 17 times; the code floor raised it 22 times (it under-rates, and planted log text tried to talk it down); 6 answers were rejected for claiming indicators not in the evidence and the rules answered instead. Rules alone scoring 100% partly reflects that they implement the same rubric the labels use.
+- Gemini guardrails (enforced in code, `server/defense/gemini.ts`): severity may be raised but never go below what the observed signals justify; any summary claiming a program, outside contact, scheduled task or changed file that is not in the evidence is rejected and the rules answer instead. The audit log's `investigation.done` line says which happened.
 - Gemini output is checked in code: schema-constrained, may only cite real telemetry lines by number, falls back to rules on bad JSON, rate limits, or any "breach"/"data stolen" wording. Told not to infer a program's purpose from its name.
 
 Open:
 - Droid: no Factory key, so the scripted plan stays (cut order allows it). README "Factory Droid integration point" says so plainly; do not claim Droid does real work.
-- Eval: waiting on Person 3 to push the eval harness (severity accuracy, `EVAL_INVESTIGATOR`). Then rerun `npm run eval` with rules and with `EVAL_INVESTIGATOR=gemini` for the Devpost numbers.
+- `evals/results.md` is from the Gemini run (what the demo uses). Rerun after any investigator change: `npm run eval` (rules) and `EVAL_INVESTIGATOR=gemini npm run eval`.
+- Detection false alarms on IT-approved jobs need a change-ticket/allowlist input; not in scope tonight.
 - Photon: waiting on Person 3 to expose the real sender in the core; `server/defense/core.ts` `sendSms` is the single swap point and is still a stub (log + `sms.sent`). No inbound APPROVE text yet; the demo uses on-screen buttons.
 - Windows runs: one machine-health bug (backslash paths) is fixed. A second report (fix failing on the clone on Windows) is not yet diagnosed; the clone check now names which indicator remains.
 
