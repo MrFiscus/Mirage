@@ -12,7 +12,8 @@
     "dev:defense": "tsx server/defense/dev-server.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "eval:cases": "tsx evals/build-cases.ts"
+    "eval:cases": "tsx evals/build-cases.ts",
+    "watcher:eval": "tsx server/watcher/eval/run.ts"
   },
   "dependencies": {
     "@daytonaio/sdk": "^0.225.0",

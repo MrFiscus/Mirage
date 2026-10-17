@@ -50,15 +50,19 @@ export async function decide(call: ToolCall, session: Session, opts: DecideOptio
   const useLlm = r.decision === "pass" && (opts.judgeFn || llmEnabled()) && looksAmbiguous(call);
   if (useLlm) {
     try {
-      const j = opts.judgeFn ? await opts.judgeFn(call) : await judge(call, opts.judgeOptions);
+      const j = opts.judgeFn ? await opts.judgeFn(call) : await judge(call, { ...opts.judgeOptions, scope: session.scope });
+      // Make the raw model score visible next to the code floor, whether or not it tripped.
+      const note = `model score ${j.score.toFixed(2)} (threshold ${threshold.toFixed(2)}, floor ${r.score.toFixed(2)})`;
       if (j.score >= threshold) {
         verdict = {
           decision: "mirage",
           layer: "llm",
           score: Math.max(j.score, r.score),
-          reasons: [...r.reasons, ...j.reasons.map((x) => `model: ${x}`)],
+          reasons: [...r.reasons, note, ...j.reasons.map((x) => `model: ${x}`)],
           floor: r.score,
         };
+      } else {
+        verdict = { ...verdict, reasons: [...verdict.reasons, note] };
       }
     } catch {
       // Model failed or was rate-limited: keep the rules verdict. The floor still holds.

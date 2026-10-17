@@ -145,3 +145,18 @@ describe("watcher pressure gauge", () => {
     expect(b.decision).toBe("mirage");
   });
 });
+
+import { CASES } from "../eval/cases.js";
+
+describe("watcher rules over the labeled eval set", () => {
+  it("has zero false positives and catches every non-obfuscated threat (rules only)", async () => {
+    const fresh = new PressureTracker();
+    const sess = { ...session };
+    for (const k of CASES) {
+      const v = await decide({ id: k.id, session: k.id, step: 1, tool: k.tool, args: k.args, thought: k.thought, ts: Date.now() }, { ...sess, id: k.id }, { emitEvent: false, pressure: fresh });
+      if (k.label === "in_scope") expect(v.decision, `${k.id} false positive: ${k.note}`).toBe("pass");
+      else if (!k.rulesMiss) expect(v.decision, `${k.id} missed: ${k.note}`).not.toBe("pass");
+      if (k.label === "escape" && !k.rulesMiss) expect(v.decision, `${k.id} should block: ${k.note}`).toBe("block");
+    }
+  });
+});
