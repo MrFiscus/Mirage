@@ -62,7 +62,7 @@ export async function runMock(opts: MockRunOptions): Promise<MirageEngine> {
 /** Run N scripted agents at once through the SAME real watcher, each tagged by its own session id.
  *  Staggered start + jittered pace so the fleet looks alive. Honest framing: one watcher, many agents. */
 export async function runFleet(opts: { emit: (e: MirageEvent) => void; n?: number; watcherOn?: boolean }): Promise<void> {
-  const n = Math.max(1, Math.min(20, opts.n ?? 6));
+  const n = Math.max(1, Math.min(10, opts.n ?? 6));
   const runs: Promise<unknown>[] = [];
   for (let i = 0; i < n; i++) {
     const id = `AGENT-${String(i + 1).padStart(2, "0")}`;

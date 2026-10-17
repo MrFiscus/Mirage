@@ -39,7 +39,7 @@ async function runOneVm(index: number): Promise<void> {
 
 /** Launch N real Daytona VMs concurrently, each running a watched scripted agent. */
 export async function runFleetDaytona(n = 6): Promise<void> {
-  const count = Math.max(1, Math.min(20, n));
+  const count = Math.max(1, Math.min(10, n));
   emit({ type: "audit", actor: "fleet", action: "fleet.starting", detail: `${count} real Daytona VMs`, ts: Date.now() });
   // Small stagger so sandbox creation does not all hit Daytona in the exact same instant.
   const runs = Array.from({ length: count }, (_, i) => new Promise<void>((r) => setTimeout(r, i * 250)).then(() => runOneVm(i)));

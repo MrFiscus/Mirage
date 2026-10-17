@@ -10,7 +10,7 @@ app.innerHTML = `
     <div class="logo"><span class="ring"></span><b>MIRAGE</b><small>AGENT CONTAINMENT · REAL DAYTONA VMS</small></div>
     <button class="btn ghost" id="back" style="display:none">← fleet</button>
     <div class="grow"></div>
-    <label class="count">VMs<button class="step" id="minus">−</button><input id="n" type="number" min="1" max="20" value="6" /><button class="step" id="plus">+</button></label>
+    <label class="count">VMs<button class="step" id="minus">−</button><input id="n" type="number" min="1" max="10" value="6" /><button class="step" id="plus">+</button></label>
     <span class="phase" id="phase">ready</span>
     <button class="btn" id="start">Start testing</button>
   </div>
@@ -173,7 +173,7 @@ canvas.addEventListener("click", (ev) => {
 });
 document.querySelector("#back").onclick = () => { state.view = "fleet"; state.focus = null; document.querySelector("#back").style.display = "none"; computeCells(); renderStats(); };
 
-function chosenN() { const el = document.querySelector("#n"); return Math.max(1, Math.min(20, Math.round(Number(el.value) || 6))); }
+function chosenN() { const el = document.querySelector("#n"); return Math.max(1, Math.min(10, Math.round(Number(el.value) || 6))); }
 async function start() {
   const n = chosenN(); document.querySelector("#n").value = n; state.fleetN = n;
   state.phase = "running"; state.boxes = new Map(); state.order = []; state.feed = []; state.pending = {};
@@ -186,7 +186,7 @@ async function start() {
 }
 document.querySelector("#start").onclick = start;
 document.querySelector("#start2").onclick = start;
-const nudge = (d) => { const el = document.querySelector("#n"); el.value = Math.max(1, Math.min(20, (Number(el.value) || 6) + d)); };
+const nudge = (d) => { const el = document.querySelector("#n"); el.value = Math.max(1, Math.min(10, (Number(el.value) || 6) + d)); };
 document.querySelector("#plus").onclick = () => nudge(1);
 document.querySelector("#minus").onclick = () => nudge(-1);
 

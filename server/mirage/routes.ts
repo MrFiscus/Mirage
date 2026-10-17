@@ -45,7 +45,7 @@ mirageRouter.post("/mirage/fleet/start", (req, res) => {
     void runFleet({ emit: emit as (e: MirageEvent) => void, n, watcherOn })
       .catch((e: Error) => emit({ type: "audit", actor: "mirage", action: "mock.failed", detail: e.message, ts: Date.now() }));
   }
-  res.status(202).json({ started: true, n: Math.max(1, Math.min(20, n)), backend: real ? "daytona" : "sessions" });
+  res.status(202).json({ started: true, n: Math.max(1, Math.min(10, n)), backend: real ? "daytona" : "sessions" });
 });
 
 mirageRouter.get("/mirage/forensics/:id", (req, res) => {
