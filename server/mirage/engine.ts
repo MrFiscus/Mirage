@@ -73,7 +73,7 @@ export class MirageEngine {
   /** Route one call by its verdict. The cage calls this after watcher.decide(call). */
   route(call: ToolCall, verdict: Verdict): RouteResult {
     this.emit({ type: "tool.call", call });
-    this.emit({ type: "watcher.verdict", callId: call.id, verdict });
+    this.emit({ type: "watcher.verdict", callId: call.id, verdict: this.watcherOn ? verdict : { ...verdict, decision: "pass", score: 0, reasons: ["watcher off"], floor: 0 } });
 
     // The honest env always knows the ground truth, used for the forensic "zero real access" claim.
     const honest = runHonest(call, this.session.scope);

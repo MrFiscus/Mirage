@@ -55,8 +55,8 @@ describe("notify: text or call", () => {
     expect(events.some((e) => e.type === "call.started")).toBe(false);
     expect(smsLog).toHaveLength(1);
     expect(smsLog[0].to).toBe(ANALYST);
+    expect(smsLog[0].body).toContain(`Ticket ${inc.id}`);
     expect(smsLog[0].body).toMatch(/What happened: Identity provider alert/);
-    expect(smsLog[0].body).toMatch(/What Batman did: Planned a fix: quarantine the file/);
     expect(smsLog[0].body).toMatch(/No action needed/);
   });
 
@@ -67,6 +67,15 @@ describe("notify: text or call", () => {
     expect(started.session).toMatchObject({ phone: ANALYST, role: "analyst", verified: false });
     expect(getOutboundCall(started.session.conversationId)).toMatchObject({ phone: ANALYST, incidentId: inc.id });
     expect(smsLog.map((s) => s.body).join()).toMatch(/calling you now/);
+  });
+
+  it("a medium incident awaiting approval still gets text only", async () => {
+    const inc = recordedIncident("high");
+    inc.severity = "medium";
+    expect(await notifyAnalyst(inc)).toBe("text");
+    expect(events.some((e) => e.type === "call.started")).toBe(false);
+    expect(smsLog.at(-1)?.body).toContain(`Ticket ${inc.id}`);
+    expect(smsLog.at(-1)?.body).toContain(`Review ticket ${inc.id} in the Batman console`);
   });
 
   it("live: sends the outbound request with the per-call script and uses the returned conversation id", async () => {
@@ -82,15 +91,17 @@ describe("notify: text or call", () => {
     expect(url).toContain("/v1/convai/sip-trunk/outbound-call");
     expect(sent).toMatchObject({ agent_id: "agent", agent_phone_number_id: "pn", to_number: ANALYST });
     expect(sent.conversation_initiation_client_data.conversation_config_override.agent.first_message).toMatch(/This call is logged/);
+    expect(sent.conversation_initiation_client_data.conversation_config_override.agent.prompt.prompt).toContain("call mirage_briefing");
     expect(getOutboundCall("conv_live_1")?.incidentId).toBe(inc.id);
   });
 
-  it("live: if ElevenLabs refuses the call, the full summary with APPROVE goes out by text", async () => {
+
+  it("live: if ElevenLabs refuses the call, the full summary and console decision path go out by text", async () => {
     process.env.VOICE_MODE = "live";
     globalThis.fetch = (async () => new Response("trunk error", { status: 500 })) as unknown as typeof fetch;
     const inc = recordedIncident("high");
     expect(await notifyAnalyst(inc)).toBe("text");
-    expect(smsLog.at(-1)!.body).toMatch(new RegExp(`Reply APPROVE ${inc.id}`));
+    expect(smsLog.at(-1)!.body).toContain(`Review ticket ${inc.id} in the Batman console`);
     expect(events.some((e) => e.type === "audit" && e.action === "call.failed")).toBe(true);
   });
 
@@ -141,6 +152,20 @@ describe("tools on a call Batman placed", () => {
     const done = (await tool("decide-fix", { ...asCall, decision: "approve" })).json;
     expect(done).toMatchObject({ done: true, status: "resolved" });
     expect(getIncident(inc.id)!.proposedFix!.approvedBy).toBe("Jordan Bell");
+  });
+
+  it("serves only the pinned incident through the existing verified briefing tool", async () => {
+    const inc = recordedIncident("high");
+    const { conversationId: conversation_id } = await placeAnalystCall({ phone: ANALYST, incidentId: inc.id, incidentTitle: inc.title });
+    const asCall = { conversation_id, caller_id: PHOTON_LINE };
+    expect((await tool("mirage-briefing", asCall)).json.allowed).toBe(false);
+    await tool("send-code", asCall);
+    await tool("verify-code", { ...asCall, code: lastCode() });
+    const result = (await tool("mirage-briefing", { ...asCall, incident_id: "fake-incident" })).json;
+    expect(result.allowed).toBe(true);
+    expect(result.briefing).toContain("No live fix has been applied");
+    expect(result.briefing).toContain(inc.title);
+    expect(result.incident).toMatchObject({ id: inc.id, status: "awaiting_approval", severity: "high" });
   });
 
   it("a spoken reject closes the ticket without changing anything", async () => {

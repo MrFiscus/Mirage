@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import type { ToolCall, Verdict } from "../../../shared/types.js";
+import type { MirageEvent, ToolCall, Verdict } from "../../../shared/types.js";
 import { outsideScope, runHonest } from "../acme.js";
 import { SCORER_TARGET_SHA256, looksLikeFlag, scrubFlag } from "../flag.js";
 import { Simulator } from "../simulator.js";
@@ -109,8 +109,10 @@ describe("mirage engine", () => {
     expect(fon.fakeCalls).toBeGreaterThan(0);
     expect(fon.ledger.some((e) => looksLikeFlag(e.value))).toBe(false);
 
-    const off = await runMock({ emit: () => {}, watcherOn: false, stepMs: 0, ledgerFile: null });
+    const offEvents: MirageEvent[] = [];
+    const off = await runMock({ emit: (event) => offEvents.push(event), watcherOn: false, stepMs: 0, ledgerFile: null });
     expect(off.forensics().realOutOfScopeAccess).toBeGreaterThan(0);
+    expect(offEvents.filter((event) => event.type === "watcher.verdict").every((event) => event.verdict.decision === "pass")).toBe(true);
   });
 
   it("blocks a verdict of block and records the trigger", () => {

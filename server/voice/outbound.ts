@@ -6,12 +6,24 @@ import { OUTBOUND_PROMPT, outboundFirstMessage } from "./outbound-script.js";
 import { PhotonMessenger, type SmsSender } from "./photon.js";
 
 export type TriggerDecision = "mirage" | "block";
+export type NotificationPriority = "medium" | "high";
+export const HIGH_PRIORITY_SCORE = 0.9;
+
+// This is an alerting priority, not a claim about real-world impact. A suspicious
+// action from an actual Droid attacker always warrants a call for the demo.
+export function priorityForVerdict(decision: TriggerDecision, score: unknown, attacker?: string): NotificationPriority {
+  return attacker === "droid" || decision === "block" || (typeof score === "number" && Number.isFinite(score) && score >= HIGH_PRIORITY_SCORE)
+    ? "high"
+    : "medium";
+}
 
 export interface DefenderTrigger {
   callId: string;
   sessionId: string;
   step: number;
   decision: TriggerDecision;
+  priority: NotificationPriority;
+  attacker?: "droid";
 }
 
 export type NotificationEvent =
@@ -24,8 +36,9 @@ export interface NotificationTransport {
   placeCall(to: string, greeting: string, trigger: DefenderTrigger): Promise<void>;
 }
 
-const ALERT_TEXT = "Mirage detected an agent action outside its stated scope. We will call you to verify before sharing details.";
-const CALL_GREETING = "This is Mirage, an AI assistant. This call is logged. An agent action needs security review. Please verify your identity before I share details.";
+const MEDIUM_ALERT_TEXT = "Mirage intercepted an out-of-scope agent action. Review the session and forensic log in the Mirage dashboard. We will call if the alert escalates.";
+const HIGH_ALERT_TEXT = "Mirage detected a high-priority agent action. We will call you to verify before sharing details.";
+const CALL_GREETING = "This is Mirage, an AI assistant. This call is logged. An intercepted agent action needs security review. Please verify your identity before I share details.";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -40,7 +53,7 @@ export function briefingFor(role: Role, trigger: DefenderTrigger): string | null
     ? "was routed to the mirage instead of the real environment"
     : "was blocked before execution";
   if (role === "analyst") {
-    return `At step ${trigger.step}, an agent action outside its stated scope ${action}. Review the host-side forensic log for the exact tool call and watcher evidence. The flagged action did not reach the real out-of-scope target.`;
+    return `${trigger.priority === "high" ? "High" : "Medium"}-priority alert: at step ${trigger.step}, ${trigger.attacker === "droid" ? "a Droid agent" : "an agent"} action outside its stated scope ${action}. Review the host-side forensic log for the exact tool call and watcher evidence. The flagged action did not reach the real out-of-scope target.`;
   }
   if (role === "ceo") {
     return "A suspicious agent action was intercepted inside the demo environment. The flagged action did not reach a real out-of-scope target. The security team is reviewing the record.";
@@ -51,8 +64,9 @@ export function briefingFor(role: Role, trigger: DefenderTrigger): string | null
 // Subscribes to the shared Mirage tool-call and watcher-verdict event shapes.
 export class DefenderNotifier {
   private readonly calls = new Map<string, { sessionId: string; step: number }>();
-  private readonly delivered = new Map<string, { text: boolean; call: boolean }>();
-  private readonly inFlight = new Set<string>();
+  private readonly attackers = new Map<string, string>();
+  private readonly delivered = new Map<string, { mediumText: boolean; highText: boolean; call: boolean }>();
+  private readonly inFlight = new Map<string, Promise<void>>();
   private latestTrigger: DefenderTrigger | null = null;
 
   constructor(
@@ -68,6 +82,11 @@ export class DefenderNotifier {
 
   async handleEvent(event: unknown): Promise<void> {
     if (!isRecord(event)) return;
+    if (event.type === "session.started" && isRecord(event.session)) {
+      const { id, attacker } = event.session;
+      if (typeof id === "string" && id && typeof attacker === "string") this.attackers.set(id, attacker);
+      return;
+    }
     if (event.type === "tool.call" && isRecord(event.call)) {
       const { id, session, step } = event.call;
       if (typeof id === "string" && id && typeof session === "string" && session && Number.isInteger(step) && Number(step) >= 0) {
@@ -83,39 +102,65 @@ export class DefenderNotifier {
       this.calls.delete(event.callId);
       return;
     }
-    await this.notify({ callId: event.callId, ...call, decision });
+    const attacker = this.attackers.get(call.sessionId);
+    const trigger: DefenderTrigger = {
+      callId: event.callId, ...call, decision,
+      priority: priorityForVerdict(decision, event.verdict.score, attacker),
+      ...(attacker === "droid" ? { attacker: "droid" as const } : {})
+    };
+    await this.notify(trigger);
     const state = this.delivered.get(call.sessionId);
-    if (state?.text && state.call) this.calls.delete(event.callId);
+    if (state && (state.highText && state.call || state.mediumText && decision === "mirage")) this.calls.delete(event.callId);
   }
 
   async notify(trigger: DefenderTrigger): Promise<void> {
-    const state = this.delivered.get(trigger.sessionId) ?? { text: false, call: false };
-    if ((state.text && state.call) || this.inFlight.has(trigger.sessionId)) return;
+    const active = this.inFlight.get(trigger.sessionId);
+    if (active) {
+      await active.catch(() => undefined);
+      return this.notify(trigger);
+    }
+    const delivery = this.deliver(trigger);
+    const tracked = delivery.finally(() => {
+      if (this.inFlight.get(trigger.sessionId) === tracked) this.inFlight.delete(trigger.sessionId);
+    });
+    this.inFlight.set(trigger.sessionId, tracked);
+    return tracked;
+  }
+
+  private async deliver(trigger: DefenderTrigger): Promise<void> {
+    const state = this.delivered.get(trigger.sessionId) ?? { mediumText: false, highText: false, call: false };
+    if ((trigger.priority === "medium" && (state.mediumText || state.highText)) ||
+        (trigger.priority === "high" && state.highText && state.call)) return;
     const recipient = this.defender();
     if (!recipient || recipient.role !== "analyst" || !/^\+[1-9]\d{7,14}$/.test(recipient.phone)) {
       this.publish({ type: "audit", actor: "voice", action: "notification.no_defender", detail: "No registered on-call analyst", ts: Date.now() });
       return;
     }
 
-    this.inFlight.add(trigger.sessionId);
-    this.latestTrigger = trigger;
     this.delivered.set(trigger.sessionId, state);
+    this.publish({ type: "audit", actor: "voice", action: "notification.priority_checked", detail: `${trigger.sessionId}: ${trigger.priority} priority from watcher ${trigger.decision}${trigger.attacker === "droid" ? " (Droid attacker)" : ""}`, ts: Date.now() });
     try {
-      if (!state.text) {
-        await this.transport.sendText(recipient.phone, ALERT_TEXT);
-        state.text = true;
-        this.publish({ type: "notify.sent", channel: "text", to: maskedPhone(recipient.phone), detail: `${this.transport.mode === "mock" ? "Mock" : "Live"} boundary alert; verification required` });
+      if (trigger.priority === "medium" && !state.mediumText && !state.highText) {
+        await this.transport.sendText(recipient.phone, `${MEDIUM_ALERT_TEXT} Session ${trigger.sessionId}.`);
+        state.mediumText = true;
+        this.publish({ type: "notify.sent", channel: "text", to: maskedPhone(recipient.phone), detail: `${this.transport.mode === "mock" ? "Mock" : "Live"} medium-priority boundary alert` });
       }
-      if (!state.call) {
-        await this.transport.placeCall(recipient.phone, CALL_GREETING, trigger);
-        state.call = true;
-        this.publish({ type: "notify.sent", channel: "call", to: maskedPhone(recipient.phone), detail: `${this.transport.mode === "mock" ? "Mock" : "Live"} defender verification call` });
+      if (trigger.priority === "high") {
+        if (!state.highText) {
+          await this.transport.sendText(recipient.phone, HIGH_ALERT_TEXT);
+          state.highText = true;
+          this.publish({ type: "notify.sent", channel: "text", to: maskedPhone(recipient.phone), detail: `${this.transport.mode === "mock" ? "Mock" : "Live"} high-priority boundary alert` });
+        }
+        if (!state.call) {
+          this.latestTrigger = trigger;
+          await this.transport.placeCall(recipient.phone, CALL_GREETING, trigger);
+          state.call = true;
+          this.publish({ type: "notify.sent", channel: "call", to: maskedPhone(recipient.phone), detail: `${this.transport.mode === "mock" ? "Mock" : "Live"} high-priority defender verification call` });
+        }
       }
     } catch (error) {
       this.publish({ type: "audit", actor: "voice", action: "notification.failed", detail: "Defender notification delivery failed", ts: Date.now() });
       throw error;
-    } finally {
-      this.inFlight.delete(trigger.sessionId);
     }
   }
 }

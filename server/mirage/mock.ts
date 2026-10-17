@@ -57,6 +57,7 @@ export async function runMock(opts: MockRunOptions): Promise<MirageEngine> {
     if (stepMs) await new Promise((r) => setTimeout(r, stepMs));
   }
   opts.emit({ type: "audit", actor: "mirage", action: "run.complete", detail: `${session}: ${engine.session.realCalls} real / ${engine.session.fakeCalls} fake`, ts: Date.now() });
+  opts.emit({ type: "audit", actor: "mirage", action: "session.completed", detail: `${session}: finished`, ts: Date.now() });
   return engine;
 }
 

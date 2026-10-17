@@ -170,6 +170,8 @@ export async function runSession(opts: RunOptions): Promise<RunResult> {
     bus.emit({ type: "kill", session: session.id, reason: cap.tripped ? `cap: ${cap.tripped}` : "block: escape attempt" });
   }
 
+  bus.emit({ type: "audit", actor: "cage", action: "session.completed", detail: `${session.id}: ${containment ? "contained" : "finished"}`, ts: Date.now() });
+
   return { session, history, capReason: cap.tripped, containment, realOutOfScope, watcherMisses, decoySource: source };
 }
 

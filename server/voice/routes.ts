@@ -4,6 +4,7 @@ import type { CallSession } from "../../shared/types.js";
 import { emit } from "../core/events.js";
 import { getIncident, getSession, listIncidents, lookupCaller, saveSession } from "../core/store.js";
 import { approve, reject } from "../defense/approval.js";
+import { briefingFor } from "../defense/briefing.js";
 import { incidentViewFor } from "./disclosure.js";
 import { attachNotificationBridge, getMirageOutboundCall, getOutboundCall, type DefenderNotifier } from "./outbound.js";
 import { MAX_CODE_ATTEMPTS, type VerificationService } from "./verification.js";
@@ -171,6 +172,28 @@ export function voiceRouter(
     if (!session.verified) {
       emit({ type: "disclosure", conversationId: session.conversationId, role: session.role, fields: [], allowed: false });
       return response.json({ allowed: false, message: "Verify the caller before sharing the Mirage alert." });
+    }
+    const pinnedIncidentId = getOutboundCall(session.conversationId)?.incidentId;
+    const pinnedIncident = pinnedIncidentId ? getIncident(pinnedIncidentId) : undefined;
+    // The published agent already has this authenticated briefing tool. Batman calls
+    // use it for their pinned incident, never an incident id supplied by the model.
+    if (pinnedIncident && session.role === "analyst") {
+      const story = briefingFor(pinnedIncident);
+      const next = pinnedIncident.status === "awaiting_approval"
+        ? `No live fix has been applied. Review ticket ${pinnedIncident.id} in the Batman console to approve or reject the proposed fix.`
+        : pinnedIncident.status === "fix_rejected"
+          ? `The proposed fix was rejected. Review ticket ${pinnedIncident.id} manually in the Batman console.`
+          : pinnedIncident.status === "resolved"
+            ? "The fix was applied and the post-fix checks passed. No approval is needed."
+            : `Review ticket ${pinnedIncident.id} in the Batman console.`;
+      const briefing = [
+        `Batman incident ${pinnedIncident.id}: ${pinnedIncident.title}. Priority ${pinnedIncident.severity}. Status ${pinnedIncident.status.replace(/_/g, " ")}.`,
+        `What happened: ${story.whatHappened.slice(0, 4).join(". ")}.`,
+        `What Batman did: ${story.whatBatmanDid.join(" ") || "Investigation is in progress."}`,
+        `Next: ${next}`
+      ].join(" ");
+      emit({ type: "disclosure", conversationId: session.conversationId, role: session.role, fields: ["incident_briefing"], allowed: true });
+      return response.json({ allowed: true, role: session.role, incident: { id: pinnedIncident.id, status: pinnedIncident.status, severity: pinnedIncident.severity }, briefing });
     }
     const briefing = notifications.getBriefing(session.role, session.conversationId);
     if (!briefing) {

@@ -33,3 +33,7 @@ The four Chalk scores were `0` at steps 1, 3, 4, and 10. Full-stack wall time in
 Two dashboard runs with the watcher on recorded Mirage triggers and outbound ElevenLabs calls to the configured analyst. The analyst reported receiving the live notification. Batman's audit log recorded two `call.mirage_outbound` events. In the corresponding ElevenLabs conversations, one `send_code` tool call returned `sent: true`. The two newest Batman call sessions remain `verified: false`, and neither conversation recorded a `verify_code` or `mirage_briefing` tool call. Code readback and verified briefing therefore remain to be tested.
 
 This smoke test uses the dashboard's scripted Mirage driver and live Photon/ElevenLabs notification path. It is separate from the four-condition offline and Chalk experiment above; it does not establish live-attacker containment or a measured time advantage.
+
+## Priority-routing offline rerun (2026-10-17)
+
+After adding the medium/high notification rule, `npx tsx evals/mirage-four-conditions.ts --json` still reported 14 attempted calls, 9 out-of-scope attempts, 0 real out-of-scope executions, and loop depth 3 in the full-stack offline condition. Its mock notification count changed from 2 to **3**: one medium-priority text, then a high-priority text and call when the session escalated. This run used the deterministic offline judge and mock notification transport; it made no Chalk, Photon, or ElevenLabs request. The earlier tables above retain their original historical results.

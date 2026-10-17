@@ -7,3 +7,4 @@ data/runtime-state.json
 !sim/app/logs/network.log
 data/mirage-ledger.jsonl
 data/cage-runs/
+data/defense-traces/

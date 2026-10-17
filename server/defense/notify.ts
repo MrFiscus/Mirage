@@ -6,8 +6,8 @@ import type { Incident } from "./contracts.js";
 import { sendSms } from "./core.js";
 import { audit, traceStep } from "./run.js";
 
-/** Urgent = needs a human decision, or rated high. */
-export const isUrgent = (incident: Incident) => incident.status === "awaiting_approval" || incident.severity === "high";
+/** Phone calls are reserved for high-severity incidents; lower tiers get a text. */
+export const isUrgent = (incident: Incident) => incident.severity === "high";
 
 export async function notifyAnalyst(incident: Incident): Promise<"call" | "text"> {
   const to = analystPhone();
@@ -30,7 +30,10 @@ export async function notifyAnalyst(incident: Incident): Promise<"call" | "text"
       audit("call.failed", (e as Error).message.slice(0, 200), "voice");
     }
   }
-  const body = briefingText(briefing) + (incident.status === "awaiting_approval" ? `\nReply APPROVE ${incident.id} to apply.` : "");
+  const textBriefing = incident.status === "awaiting_approval"
+    ? { ...briefing, suggestedSteps: [`Review ticket ${incident.id} in the Batman console to approve or reject the proposed fix. No live fix has been applied.`] }
+    : briefing;
+  const body = `Ticket ${incident.id}\n${briefingText(textBriefing)}`;
   sendSms(to, body);
   step("photon", isUrgent(incident) ? "Couldn't reach the analyst by phone, so texted the full summary instead" : "Texted the on-call analyst a summary of what happened and what Batman did",
     `POST Photon message to ${to}${process.env.PHOTON_MODE === "live" ? "" : "   (demo mode: logged, not sent)"}`, [body]);
