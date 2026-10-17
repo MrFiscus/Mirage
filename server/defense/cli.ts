@@ -1,7 +1,7 @@
 import { analystPhone } from "./apply.js";
 import { approve } from "./approval.js";
 import { cleanup, startScenario } from "./orchestrator.js";
-import { getIncident, onEvent } from "./mocks/core.js";
+import { getIncident, onEvent } from "./core.js";
 
 const scenario = process.argv[2] ?? "1";
 const autoApprove = process.argv.includes("--approve");

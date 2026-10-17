@@ -3,14 +3,16 @@ import { signalsFrom } from "../alerts.js";
 import { approve } from "../approval.js";
 import { decide } from "../decision.js";
 import { RuleInvestigator, clean } from "../investigator.js";
-import { eventLog, getIncident, resetMockCore, smsLog } from "../mocks/core.js";
+import { getIncident, onEvent, smsLog } from "../core.js";
+import type { ConsoleEvent } from "../contracts.js";
 import { cleanup, startScenario } from "../orchestrator.js";
 import { createCompanyMachine, VIRUS_PATH } from "../sandbox/index.js";
 import { collectHealth, collectTelemetry, runQuery } from "../telemetry.js";
 import type { FixPlan } from "../contracts.js";
 
-beforeEach(() => resetMockCore());
 const cleanups: (() => Promise<void>)[] = [];
+const eventLog: ConsoleEvent[] = [];
+beforeEach(() => { eventLog.length = 0; smsLog.length = 0; const off = onEvent((e) => eventLog.push(e)); cleanups.push(async () => off()); });
 afterEach(async () => { for (const c of cleanups.splice(0)) await c(); });
 
 describe("sim + sandbox", () => {
@@ -75,13 +77,13 @@ describe("scenarios", () => {
   it("1: waits for approval, rejects non-analyst, resolves after analyst approves", async () => {
     const inc = await startScenario("1"); cleanups.push(() => cleanup(inc.id));
     expect(getIncident(inc.id)?.status).toBe("awaiting_approval");
-    await expect(approve(inc.id, "+15550000001")).rejects.toThrow(/analyst/); // CEO
+    await expect(approve(inc.id, "+15550001001")).rejects.toThrow(/analyst/); // CEO
     await expect(approve(inc.id, "+19999999999")).rejects.toThrow();          // unknown
     expect(getIncident(inc.id)?.status).toBe("awaiting_approval");
-    await approve(inc.id, "+15550000002");
+    await approve(inc.id, "+15550001002");
     const done = getIncident(inc.id)!;
     expect(done.status).toBe("resolved");
-    expect(done.proposedFix?.approvedBy).toBe("Sam Okafor");
+    expect(done.proposedFix?.approvedBy).toBe("Jordan Bell");
     expect(eventLog.some((e) => e.type === "audit" && e.action === "approval.denied")).toBe(true);
   }, 60_000);
   it("2: harmful fix is rejected and live system untouched", async () => {
@@ -90,7 +92,7 @@ describe("scenarios", () => {
     expect(got.status).toBe("fix_rejected");
     expect(got.proposedFix?.cloneCheck?.passed).toBe(false);
     expect(smsLog.at(-1)?.body).toMatch(/REJECTED/);
-    await expect(approve(inc.id, "+15550000002")).rejects.toThrow();
+    await expect(approve(inc.id, "+15550001002")).rejects.toThrow();
   }, 60_000);
   it("3: low risk fix that passes the clone auto-applies", async () => {
     const inc = await startScenario("3"); cleanups.push(() => cleanup(inc.id));

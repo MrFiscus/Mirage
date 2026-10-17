@@ -6,7 +6,7 @@ import { RuleInvestigator, type Investigator } from "./investigator.js";
 import { ScriptedPlanner, type FixPlanner } from "./planner.js";
 import { createCompanyMachine, VIRUS_PATH } from "./sandbox/index.js";
 import { audit, runs, update } from "./run.js";
-import { sendSms } from "./mocks/core.js";
+import { sendSms } from "./core.js";
 import { collectTelemetry } from "./telemetry.js";
 import type { Incident } from "./contracts.js";
 
@@ -15,8 +15,10 @@ export interface ScenarioDeps {
   planner?: FixPlanner;
 }
 
+export const newIncidentId = (scenario: string) => `inc-${scenario}-${Date.now().toString(36)}`;
+
 /** Runs the loop up to the decision. Returns the incident; if it is awaiting_approval, call approve() next. */
-export async function startScenario(scenario: string, deps: ScenarioDeps = {}): Promise<Incident> {
+export async function startScenario(scenario: string, deps: ScenarioDeps = {}, id = newIncidentId(scenario)): Promise<Incident> {
   const investigator = deps.investigator ?? new RuleInvestigator();
   const planner = deps.planner ?? new ScriptedPlanner();
 
@@ -29,7 +31,7 @@ export async function startScenario(scenario: string, deps: ScenarioDeps = {}): 
   audit("sim.virus", "harmless simulated virus executed on company machine", "simulator");
 
   const telemetry = await collectTelemetry(company);
-  const incident = detect(telemetry, `inc-${scenario}-${Date.now().toString(36)}`);
+  const incident = detect(telemetry, id);
   if (!incident) throw new Error("no alert raised");
   runs.set(incident.id, { company });
   update(incident, {});

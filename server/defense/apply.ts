@@ -1,9 +1,9 @@
 import { signalCount, signalsFrom } from "./alerts.js";
 import { collectTelemetry } from "./telemetry.js";
 import { audit, mustGet, runs, update } from "./run.js";
-import { sendSms } from "./mocks/core.js";
+import { sendSms } from "./core.js";
 
-export const analystPhone = () => process.env.ANALYST_PHONE ?? "+15550000002";
+export const analystPhone = () => process.env.ANALYST_PHONE ?? "+15550001002";
 
 /** Applies the already clone-checked plan to the company machine, then verifies it is clean. */
 export async function applyFix(incidentId: string): Promise<void> {

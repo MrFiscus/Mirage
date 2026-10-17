@@ -1,5 +1,5 @@
 import type { FixPlan, Incident } from "./contracts.js";
-import { emit, getIncident, saveIncident } from "./mocks/core.js";
+import { emit, getIncident, saveIncident } from "./core.js";
 import type { Sandbox } from "./sandbox/index.js";
 
 /** Live state for an incident between "awaiting approval" and "applied". */
@@ -11,7 +11,7 @@ export function audit(action: string, detail: string, actor = "batman") {
 }
 
 export function update(incident: Incident, patch: Partial<Incident>): Incident {
-  Object.assign(incident, patch);
+  Object.assign(incident, patch, { updatedAt: Date.now() });
   saveIncident(incident);
   emit({ type: "incident.updated", incident: structuredClone(incident) });
   return incident;

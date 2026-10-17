@@ -35,5 +35,6 @@ export function detect(t: Telemetry, id: string): Incident | null {
     evidence: [],
     technicalSummary: "Alert raised; investigation pending.",
     businessSummary: "An alert was raised on a company machine. Investigation is starting.",
+    createdAt: Date.now(),
   };
 }

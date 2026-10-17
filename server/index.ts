@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import type { Incident } from "../shared/types.js";
 import { emit, subscribe } from "./core/events.js";
 import { getIncident, listAudit, listIncidents, saveIncident } from "./core/store.js";
+import { mountDefense } from "./defense/mount.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -23,6 +24,9 @@ function publish(event: Parameters<typeof emit>[0]): void {
 }
 
 subscribe(() => undefined);
+
+// Defense engine (Person 2): routes + live events to the console sockets.
+mountDefense(app, (event) => { const payload = JSON.stringify(event); for (const socket of sockets.clients) if (socket.readyState === 1) socket.send(payload); });
 
 app.get("/api/health", (_request, response) => response.json({ ok: true, service: "batman-console" }));
 app.get("/api/incidents", (_request, response) => response.json(listIncidents()));

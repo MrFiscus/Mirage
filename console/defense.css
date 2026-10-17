@@ -1,0 +1,30 @@
+/* Demo panel (Person 2). Scoped to #defense-demo; reuses the console's palette variables. */
+#defense-demo { position:fixed; left:0; right:0; bottom:0; z-index:50; background:var(--ink); color:#eef2e6; border-top:3px solid var(--acid); font-family:'Space Grotesk',sans-serif; }
+#defense-demo .dd-bar { height:56px; display:flex; align-items:center; gap:18px; padding:0 4vw; }
+#defense-demo .dd-bar b { letter-spacing:.14em; font-size:13px; color:var(--acid); }
+#defense-demo .dd-badge { font-family:'DM Mono',monospace; font-size:12px; padding:3px 9px; border:1px solid #4a5a50; color:#c9d3c3; }
+#defense-demo .dd-status { font-family:'DM Mono',monospace; font-size:14px; text-transform:uppercase; letter-spacing:.08em; }
+#defense-demo .dd-toggle { margin-left:auto; background:none; border:1px solid #4a5a50; color:#eef2e6; padding:6px 14px; }
+#defense-demo .dd-body { display:grid; grid-template-columns:320px 1.3fr 1fr; gap:24px; padding:6px 4vw 22px; height:284px; }
+#defense-demo .dd-col { min-width:0; overflow:auto; }
+#defense-demo h3 { margin:0 0 10px; font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:#9aa89e; font-weight:500; }
+#defense-demo .dd-scn { display:block; width:100%; text-align:left; margin-bottom:6px; padding:7px 12px; background:#233028; color:#eef2e6; border:1px solid #3a4a40; }
+#defense-demo .dd-scn strong { display:block; font-size:16px; }
+#defense-demo .dd-scn span { font-size:12px; line-height:1.25; display:block; color:#aebaa8; }
+#defense-demo .dd-scn:hover:not(:disabled) { background:var(--acid); color:var(--ink); }
+#defense-demo .dd-scn:hover:not(:disabled) span { color:#31412f; }
+#defense-demo .dd-scn:disabled { opacity:.45; cursor:not-allowed; }
+#defense-demo .dd-log { font-family:'DM Mono',monospace; font-size:14px; }
+#defense-demo .dd-row { display:grid; grid-template-columns:70px 170px 1fr; gap:10px; padding:5px 0; border-bottom:1px solid #2c3a31; }
+#defense-demo .dd-row time { color:#7f8d83; } #defense-demo .dd-row b { color:var(--acid); font-weight:500; } #defense-demo .dd-row span { color:#d5ddd0; overflow-wrap:anywhere; }
+#defense-demo .dd-muted { color:#7f8d83; margin:0; }
+#defense-demo .dd-verdict { padding:10px 14px; font-size:17px; font-weight:600; margin-bottom:10px; }
+#defense-demo .dd-verdict.ok { background:#1f4a35; color:#a8f0c8; } #defense-demo .dd-verdict.bad { background:#5a2620; color:#ffc3bb; }
+#defense-demo .dd-verdict.wait { background:#4d4a1c; color:var(--acid); } #defense-demo .dd-verdict.idle { background:#233028; color:#aebaa8; font-weight:400; }
+#defense-demo .dd-checks { list-style:none; margin:0 0 10px; padding:0; font-size:16px; }
+#defense-demo .dd-checks li { padding:3px 0; } #defense-demo .dd-checks i { display:inline-block; width:24px; font-style:normal; font-weight:700; }
+#defense-demo .dd-checks .pass i { color:#6ee0a4; } #defense-demo .dd-checks .fail { color:#ffb1a6; } #defense-demo .dd-checks .fail i { color:#ff7a68; }
+#defense-demo details { font-size:13px; color:#c3cdbd; } #defense-demo pre { margin:6px 0 0; font-family:'DM Mono',monospace; white-space:pre-wrap; color:#d5ddd0; }
+#defense-demo .dd-approve { width:100%; margin-top:10px; padding:12px; font-size:16px; font-weight:700; background:var(--acid); color:var(--ink); border:0; }
+#defense-demo .dd-err { color:#ff9f92; font-size:13px; }
+@media (max-width:900px) { #defense-demo .dd-body { grid-template-columns:1fr; height:60vh; } }

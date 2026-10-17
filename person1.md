@@ -56,12 +56,11 @@ import type { CallSession, Incident } from "../../shared/types.js";
 
 1. **`sendSms` does not exist in the real core yet.** For the texted one time code, write a local mock
    in `server/voice/` (log the code to the console), and ask Person 3 where the real Photon send will live.
-2. **The defense engine does not write to the real store yet.** It currently uses its own in-memory mock
-   (`server/defense/mocks/core.ts`), so incidents from `npm run scenario` will not appear in
-   `getIncident()` from `server/core/store.ts`. Until Person 2 swaps the mock for the real core, build
-   against `data/incidents.json`. Person 2 will post in chat when it is swapped.
-3. **The defense mock uses different analyst/CEO phone numbers** (`+1555000000x`) than `data/users.json`.
-   Use the numbers in `data/users.json`.
+2. **The defense engine now uses the real core.** Incidents from `npm run scenario` or the console's demo
+   panel are saved with `saveIncident` and are readable with `getIncident(id)` / `listIncidents()`. Ids look like
+   `inc-1-xxxx`. Run one from the console (bottom "Demo controls" panel) and read it back in your voice tool.
+3. The defense engine sends its analyst text through a stub `sendSms` in `server/defense/core.ts` (log + `sms.sent`
+   event). Replace it when Photon sending exists.
 4. Nothing on `main` has a public URL yet. The ElevenLabs webhook needs one (Person 3 is deploying; until then
    use a tunnel such as cloudflared or ngrok for testing).
 
