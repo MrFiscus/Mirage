@@ -70,3 +70,6 @@ export function lookupCaller(phone: string): Caller | null {
   const users = readJson<Caller[]>(resolve(dataRoot, "users.json"), []);
   return users.find((user) => user.phone === phone) ?? null;
 }
+export function listSessions(): CallSession[] {
+  return [...state.sessions].reverse().slice(0, 20);
+}
