@@ -78,12 +78,17 @@ export async function runPool<T>(
   fn: (item: T, index: number) => Promise<void>,
   shouldStop: () => boolean = () => false,
   staggerMs = 300,
+  // The first wave's starts are spread over at most this long, so a large concurrency ramps up in seconds instead of
+  // slot*staggerMs (which at 1000 slots would delay the last worker ~5 min). Daytona's cap was lifted, so wide pools
+  // are expected: the per-slot gap shrinks to keep the whole ramp inside the window.
+  rampWindowMs = 15000,
 ): Promise<void> {
   const width = Math.max(1, Math.floor(limit));
+  const gap = width > 1 ? Math.min(staggerMs, Math.floor(rampWindowMs / (width - 1))) : 0;
   let next = 0;
   const worker = async (slot: number) => {
     // first wave: spread starts so VM creation does not hit Daytona all in the same instant
-    if (slot > 0 && staggerMs > 0) await new Promise<void>((r) => setTimeout(r, slot * staggerMs));
+    if (slot > 0 && gap > 0) await new Promise<void>((r) => setTimeout(r, slot * gap));
     while (next < items.length && !shouldStop()) {
       const i = next++;
       await fn(items[i], i);
