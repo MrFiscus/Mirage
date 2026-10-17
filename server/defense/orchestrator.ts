@@ -25,7 +25,7 @@ export async function startScenario(scenario: string, deps: ScenarioDeps = {}): 
   const baseline = await collectTelemetry(company);
   if (!baseline.health.every((c) => c.passed)) throw new Error("company machine unhealthy before the attack");
 
-  await company.exec(`node "${VIRUS_PATH}"`); // the simulated attack
+  await company.runScript(VIRUS_PATH); // the simulated attack
   audit("sim.virus", "harmless simulated virus executed on company machine", "simulator");
 
   const telemetry = await collectTelemetry(company);

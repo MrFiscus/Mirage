@@ -5,7 +5,7 @@ import { decide } from "../decision.js";
 import { RuleInvestigator, clean } from "../investigator.js";
 import { eventLog, getIncident, resetMockCore, smsLog } from "../mocks/core.js";
 import { cleanup, startScenario } from "../orchestrator.js";
-import { LocalSandbox, VIRUS_PATH } from "../sandbox/index.js";
+import { createCompanyMachine, VIRUS_PATH } from "../sandbox/index.js";
 import { collectHealth, collectTelemetry, runQuery } from "../telemetry.js";
 import type { FixPlan } from "../contracts.js";
 
@@ -15,9 +15,9 @@ afterEach(async () => { for (const c of cleanups.splice(0)) await c(); });
 
 describe("sim + sandbox", () => {
   it("virus breaks integrity and fixing restores health; clone is isolated", async () => {
-    const sb = await LocalSandbox.create(); cleanups.push(() => sb.destroy());
+    const sb = await createCompanyMachine(); cleanups.push(() => sb.destroy());
     expect((await collectHealth(sb)).every((c) => c.passed)).toBe(true);
-    await sb.exec(`node "${VIRUS_PATH}"`);
+    await sb.runScript(VIRUS_PATH);
     const t = await collectTelemetry(sb);
     expect(t.processes.length).toBe(1);
     expect(t.health.find((c) => c.name === "key files intact")?.passed).toBe(false);
@@ -28,15 +28,15 @@ describe("sim + sandbox", () => {
     expect((await collectTelemetry(sb)).processes.length).toBe(1); // original untouched
     await clone.exec("rm -f config.json");
     expect(await sb.readFile("config.json")).toContain("acme-payroll");
-  });
+  }, 60_000);
   it("readFile cannot escape the sandbox", async () => {
-    const sb = await LocalSandbox.create(); cleanups.push(() => sb.destroy());
+    const sb = await createCompanyMachine(); cleanups.push(() => sb.destroy());
     await expect(sb.readFile("../../etc/passwd")).rejects.toThrow();
-  });
+  }, 60_000);
   it("rejects unknown queries", async () => {
-    const sb = await LocalSandbox.create(); cleanups.push(() => sb.destroy());
+    const sb = await createCompanyMachine(); cleanups.push(() => sb.destroy());
     await expect(runQuery(sb, "rm -rf /" as never)).rejects.toThrow();
-  });
+  }, 60_000);
 });
 
 describe("investigator", () => {

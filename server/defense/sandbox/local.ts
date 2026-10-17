@@ -46,6 +46,10 @@ export class LocalSandbox implements Sandbox {
     });
   }
 
+  runScript(localPath: string, args = ""): Promise<ExecResult> {
+    return this.exec(`node "${localPath}" ${args}`);
+  }
+
   async readFile(path: string): Promise<string> {
     const full = resolve(this.dir, path);
     if (full !== this.dir && !full.startsWith(this.dir + sep)) throw new Error("path escapes sandbox");
@@ -61,7 +65,7 @@ export class LocalSandbox implements Sandbox {
     const copy = new LocalSandbox(id, dir);
     if (existsSync(join(this.dir, ".run", "rogue.pid"))) {
       await rm(join(dir, ".run", "rogue.pid"), { force: true });
-      await copy.exec(`node "${VIRUS_PATH}" respawn`);
+      await copy.runScript(VIRUS_PATH, "respawn");
     }
     return copy;
   }
