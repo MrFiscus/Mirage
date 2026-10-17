@@ -3,10 +3,11 @@
 // for VirusTotal / ipinfo / AbuseIPDB, and records a plain sentence plus the exact query for the demo pages.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { applyFix, analystPhone } from "./apply.js";
+import { applyFix } from "./apply.js";
 import type { FixPlan, Incident } from "./contracts.js";
-import { sendSms } from "./core.js";
+import { notifyAnalyst } from "./notify.js";
 import { decide } from "./decision.js";
+import { planWithDroid, type PlanContext } from "./droid.js";
 import { GeminiInvestigator, type CaseInput } from "./gemini.js";
 import { clean, type Investigation } from "./investigator.js";
 import { createInvestigator } from "./investigators.js";
@@ -30,14 +31,14 @@ export const PLAYBOOK_TITLES = {
 export type Tier = keyof typeof PLAYBOOK_TITLES;
 export const isPlaybook = (s: string): s is Tier => s === "low" || s === "high";
 
-type Who = "batman" | "edr" | "idp" | "virustotal" | "ipinfo" | "abuseipdb" | "photon";
-type Check = { name: string; passed: boolean; detail?: string };
+type Who = "batman" | "edr" | "idp" | "virustotal" | "ipinfo" | "abuseipdb" | "photon" | "aiagent" | "harness" | "sensor";
+export type Check = { name: string; passed: boolean; detail?: string };
 
 const lines = (s: string) => s.split("\n").map((l) => l.trim()).filter(Boolean);
-async function look(sb: Sandbox, cmd: string): Promise<string[]> { return lines((await sb.exec(cmd)).stdout); }
+export async function look(sb: Sandbox, cmd: string): Promise<string[]> { return lines((await sb.exec(cmd)).stdout); }
 
 /** One step of the agent: what it did in plain words, the exact query, and what came back. */
-async function agent<T>(id: string, who: Who, query: string, work: () => Promise<T>, say: (r: T) => { text: string; result?: string[] }): Promise<T> {
+export async function agent<T>(id: string, who: Who, query: string, work: () => Promise<T>, say: (r: T) => { text: string; result?: string[] }): Promise<T> {
   const t = Date.now();
   const r = await work();
   const { text, result } = say(r);
@@ -46,13 +47,16 @@ async function agent<T>(id: string, who: Who, query: string, work: () => Promise
   return r;
 }
 
-async function pcChecks(sb: Sandbox, args: string): Promise<Check[]> {
-  const out = await sb.runScript(PC_SCRIPT, args);
+/** A sim script's own checks (JSON on stdout) plus the machine's health checks. */
+export async function scriptChecks(sb: Sandbox, script: string, args: string): Promise<Check[]> {
+  const out = await sb.runScript(script, args);
   let pc: Check[] = [];
-  try { pc = JSON.parse(out.stdout).checks; } catch { pc = [{ name: "PC check script", passed: false, detail: out.stdout.slice(0, 120) }]; }
+  try { pc = JSON.parse(out.stdout).checks; } catch { pc = [{ name: "Check script", passed: false, detail: out.stdout.slice(0, 120) }]; }
   const health = (await collectHealth(sb)).map((c) => ({ ...c, name: `Machine health: ${c.name}` }));
   return [...pc, ...health];
 }
+
+const pcChecks = (sb: Sandbox, args: string) => scriptChecks(sb, PC_SCRIPT, args);
 
 function km(a: { lat: number; lon: number }, b: { lat: number; lon: number }): number {
   const r = (d: number) => (d * Math.PI) / 180;
@@ -62,13 +66,13 @@ function km(a: { lat: number; lon: number }, b: { lat: number; lon: number }): n
 const field = (line: string, k: string) => new RegExp(`(?:^|\\s)${k}=(\\S+)`).exec(line)?.[1] ?? "";
 
 /** Gemini (with guardrails) when configured, otherwise the deterministic answer. */
-async function investigate(input: CaseInput): Promise<Investigation> {
+export async function investigate(input: CaseInput): Promise<Investigation> {
   const inv = createInvestigator();
   return inv instanceof GeminiInvestigator ? inv.judge(input) : input.fallback();
 }
 
 // A claim counts only when asserted: "the file was opened" is a claim, "it was never opened" / "not a VPN" is not.
-const NEGATION = /\b(not|never|no|without|neither|nor|none|n't|cannot|wasn't|isn't|hasn't|didn't|unconfirmed|no evidence)\b/i;
+const NEGATION = /\b(not|never|no|nothing|without|neither|nor|none|n't|cannot|wasn't|isn't|hasn't|didn't|unconfirmed|no evidence)\b/i;
 export const claimChecker = (claims: { pattern: RegExp; present: boolean; what: string }[]) => (text: string) => {
   const found = new Set<string>();
   for (const clause of text.replace(/\([^)]*\)/g, "").split(/[.;,:]\s+|\s+(?:but|and|while|although)\s+/i)) {
@@ -90,7 +94,7 @@ export async function runPlaybook(tier: Tier, id: string, machines: Sandbox[]): 
   return tier === "low" ? fileDownload(id, company) : unknownLogin(id, company);
 }
 
-function openIncident(id: string, title: string): Incident {
+export function openIncident(id: string, title: string): Incident {
   const incident: Incident = {
     id, title, status: "detected", severity: "low", confidence: 0, evidence: [],
     technicalSummary: "Alert received; investigation pending.",
@@ -104,22 +108,25 @@ function openIncident(id: string, title: string): Incident {
 }
 
 /** Shared tail: plan → test on a copy → decision → apply or wait for the analyst. */
-async function testAndDecide(id: string, incident: Incident, company: Sandbox, plan: FixPlan, checkArgs: string, planText: string): Promise<Incident> {
-  traceStep(id, "plan", { planner: "scripted (Droid placeholder)", commands: plan.commands, drastic: plan.drastic, text: planText });
-  audit("fix.planned", `scripted (Droid placeholder): ${plan.commands.length} steps, ${plan.drastic ? "major change" : "minor change"}`);
+export async function testAndDecide(id: string, incident: Incident, company: Sandbox, ctx: PlanContext, check: (sb: Sandbox) => Promise<Check[]>, planText: string): Promise<Incident> {
+  const planned = await planWithDroid(ctx);
+  const plan = planned.plan;
+  const planner = planned.engine === "droid" ? "Factory Droid" : "scripted (Droid placeholder)";
+  traceStep(id, "plan", { planner, engine: planned.engine, commands: plan.commands, drastic: plan.drastic, text: planText, rationale: planned.rationale, note: planned.note }, planned.ms);
+  audit("fix.planned", `${planner}: ${plan.commands.length} steps, ${plan.drastic ? "major change" : "minor change"}${planned.note ? `; ${planned.note}` : ""}`);
   update(incident, { status: "testing_fix", proposedFix: plan });
 
   const copy = await timed(id, "clone.created", () => company.clone(), (c) => ({ id: c.id }));
   runs.get(id)!.clone = copy;
   audit("clone.created", `test copy ${copy.id} created`);
   const t = Date.now();
-  const before = await pcChecks(copy, checkArgs);
+  const before = await check(copy);
   const commandFailures: string[] = [];
   for (const cmd of plan.commands) {
     const r = await copy.exec(cmd);
     if (r.code !== 0) { commandFailures.push(`${cmd} (exit ${r.code})`); break; }
   }
-  const after = await pcChecks(copy, checkArgs);
+  const after = await check(copy);
   const checks = [...after.map(({ name, passed }) => ({ name, passed })), { name: "Fix commands succeeded", passed: commandFailures.length === 0 }];
   const passed = checks.every((c) => c.passed);
   traceStep(id, "clone.checked", { before, checks, passed, remaining: after.filter((c) => !c.passed).map((c) => c.name), commandFailures }, Date.now() - t);
@@ -134,11 +141,10 @@ async function testAndDecide(id: string, incident: Incident, company: Sandbox, p
   traceStep(id, "decision", { action: decision.action, reason: decision.reason, passed, drastic: plan.drastic });
   if (decision.action === "reject") {
     update(incident, { status: "fix_rejected", technicalSummary: incident.technicalSummary + ` Proposed fix rejected: ${decision.reason}.` });
+    await notifyAnalyst(incident);
   } else if (decision.action === "await_approval") {
     update(incident, { status: "awaiting_approval" });
-    const body = `Batman: ${incident.title}. Priority ${incident.severity}. Proposed: ${planText.toLowerCase()} (passed ${checks.length}/${checks.length} checks on a test copy). Reply APPROVE ${incident.id} to apply.`;
-    await agent(id, "photon", `POST Photon message to on-call analyst ${analystPhone()}   (demo mode: logged, not sent)`, async () => sendSms(analystPhone(), body),
-      () => ({ text: `Alerted the on-call analyst for next steps: proposed to ${planText.charAt(0).toLowerCase()}${planText.slice(1)}`, result: [body] }));
+    await notifyAnalyst(incident);
   } else {
     await applyFix(id);
   }
@@ -209,7 +215,7 @@ async function fileDownload(id: string, pc: Sandbox): Promise<Incident> {
   audit("investigation.done", `${engine ?? "investigator"}: severity ${inv.severity}, confidence ${inv.confidence}, ${inv.evidence.length} evidence items`);
   traceStep(id, "investigation", { engine, trace, severity: inv.severity, confidence: inv.confidence, evidence: inv.evidence, floor }, trace?.ms);
 
-  const plan: FixPlan = {
+  const fallback: FixPlan = {
     drastic: false,
     commands: [
       "mkdir -p pc/quarantine",
@@ -218,7 +224,17 @@ async function fileDownload(id: string, pc: Sandbox): Promise<Incident> {
       `echo '${domain}' >> pc/policy/blocked-domains.txt`,
     ],
   };
-  return testAndDecide(id, incident, pc, plan, `check-file '${rel}'`, "Quarantine the file and block the download site");
+  return testAndDecide(id, incident, pc, {
+    goal: "Quarantine the downloaded malicious file so it cannot run, and block the site it was downloaded from.",
+    machine: [
+      `The downloaded file is at '${path}' (the path contains spaces or odd characters; quote it).`,
+      "Quarantined files go in pc/quarantine/ under the name <original name>.quarantined, e.g. pc/quarantine/ObviousVirus.exe.quarantined, with all permissions removed (mode 000).",
+      "Blocked download domains are listed one per line in pc/policy/blocked-domains.txt (append; do not rewrite the file).",
+      "Robin's other documents live under pc/C/Business and must not change.",
+    ],
+    checks: ["File removed from Robin's folder", "File quarantined at pc/quarantine/ObviousVirus.exe.quarantined with mode 000", `${domain} listed in pc/policy/blocked-domains.txt`, "Robin's other files unchanged"],
+    evidence: inv.evidence, drasticFloor: false, fallback,
+  }, (sb) => pcChecks(sb, `check-file '${rel}'`), "Quarantine the file and block the download site");
 }
 
 /* ------------------------------ high tier ------------------------------ */
@@ -298,7 +314,7 @@ async function unknownLogin(id: string, pc: Sandbox): Promise<Incident> {
   audit("investigation.done", `${engine ?? "investigator"}: severity ${inv.severity}, confidence ${inv.confidence}, ${inv.evidence.length} evidence items`);
   traceStep(id, "investigation", { engine, trace, severity: inv.severity, confidence: inv.confidence, evidence: inv.evidence, floor }, trace?.ms);
 
-  const plan: FixPlan = {
+  const fallback: FixPlan = {
     drastic: true,
     commands: [
       `echo '${USER}' >> pc/policy/disabled-accounts.txt`,
@@ -306,5 +322,15 @@ async function unknownLogin(id: string, pc: Sandbox): Promise<Incident> {
       `echo '${USER}' >> pc/policy/password-reset-required.txt`,
     ],
   };
-  return testAndDecide(id, incident, pc, plan, "check-login", "Lock Robin's account, sign out every session, require a password reset");
+  return testAndDecide(id, incident, pc, {
+    goal: `Contain a likely account takeover of ${USER}: block further sign-ins, end every live session of that user, and force a password reset.`,
+    machine: [
+      "Disabled accounts are listed one email per line in pc/policy/disabled-accounts.txt (append).",
+      "Accounts that must reset their password are listed one email per line in pc/policy/password-reset-required.txt (append).",
+      `Live sessions are in pc/state/sessions.txt, one per line, like: session=s-9c07 user=${USER} ip=203.0.113.77 app=OutlookWeb started=...`,
+      "Other users' sessions in that file must stay exactly as they are.",
+    ],
+    checks: [`${USER} listed in pc/policy/disabled-accounts.txt`, `No line with user=${USER} left in pc/state/sessions.txt`, "Other users' sessions untouched", `${USER} listed in pc/policy/password-reset-required.txt`],
+    evidence: inv.evidence, drasticFloor: true, fallback,
+  }, (sb) => pcChecks(sb, "check-login"), "Lock Robin's account, sign out every session, require a password reset");
 }

@@ -4,6 +4,7 @@ export interface VoiceReadiness {
   inboundDestination: boolean;
   outboundCredentials: boolean;
   elevenLabsAgent: boolean;
+  outboundApi: boolean;
   ready: boolean;
 }
 
@@ -14,6 +15,7 @@ export function getVoiceReadiness(): VoiceReadiness {
     inboundDestination: Boolean(process.env.PHOTON_SIP_INBOUND_ADDRESS),
     outboundCredentials: Boolean(process.env.PHOTON_SIP_ADDRESS && process.env.PHOTON_SIP_USERNAME && process.env.PHOTON_SIP_PASSWORD),
     elevenLabsAgent: Boolean(process.env.ELEVENLABS_AGENT_ID),
+    outboundApi: Boolean(process.env.ELEVENLABS_API_KEY && process.env.ELEVENLABS_PHONE_NUMBER_ID),
     ready: false
   };
   readiness.ready = Object.entries(readiness)

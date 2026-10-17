@@ -4,6 +4,7 @@ import { analystPhone } from "./apply.js";
 import { audit, getTrace } from "./run.js";
 import { getIncident } from "./core.js";
 import { newIncidentId, startScenario } from "./orchestrator.js";
+import { droidEnabled } from "./droid.js";
 
 export const defenseRouter = Router();
 
@@ -13,6 +14,7 @@ const SCENARIOS = {
   "3": "Virus, low-risk fix passes the clone check and auto-applies",
   low: "Low tier: malicious file download on Robin's PC, quarantined automatically",
   high: "High tier: sign-in from an unknown location, analyst approves locking the account",
+  agent: "AI agent tier: a coding agent leaves its task and contacts decoys, analyst approves suspending it",
   "virus-low": "Server: unapproved scheduled task, fixed automatically",
   "virus-high": "Server: unknown program contacting an outside address, needs analyst approval",
 } as const;
@@ -22,7 +24,9 @@ defenseRouter.get("/defense/info", (_req, res) =>
     backend: process.env.SANDBOX_BACKEND === "daytona" ? "daytona" : "local",
     investigator: process.env.INVESTIGATOR === "chalk" && process.env.CHALK_ROUTER_API_KEY && process.env.CHALK_ENV_ID && process.env.CHALK_MODEL ? "chalk"
       : process.env.INVESTIGATOR === "gemini" && process.env.GEMINI_API_KEY ? "gemini" : "rules",
-    planner: "scripted (Droid placeholder)",
+    planner: droidEnabled() ? "droid" : "scripted (Droid placeholder)",
+    photon: process.env.PHOTON_MODE === "live" ? "live" : "mock",
+    voice: process.env.VOICE_MODE === "live" ? "live" : "mock",
     scenarios: SCENARIOS,
   }));
 
