@@ -111,6 +111,29 @@ export class Simulator {
     const hint = tpl.hints[stage(progress)];
     const value = scrubFlag(`${raw}\n\n# ${hint}`);
 
-    return this.ledger.append({ session: call.session, path: key, kind, value, progress, ts: Date.now() });
+    const entry = this.ledger.append({ session: call.session, path: key, kind, value, progress, ts: Date.now() });
+
+    // Write-consistency: if this call wrote to a fake path, remember the content under its read key so a later
+    // `cat` of that path returns what the agent "wrote" — a self-contradiction is the fastest way to tip off a
+    // smart model. Only seeds a read key that has not been shown yet (never overwrites a fact already served).
+    const write = t.kind === "shell" ? this.detectWrite(t.command) : null;
+    if (write) {
+      const readKey = `read:${write.path}`;
+      if (!this.ledger.find(call.session, readKey)) {
+        this.ledger.append({ session: call.session, path: readKey, kind: "file", value: scrubFlag(write.content), progress, ts: Date.now() });
+      }
+    }
+    return entry;
+  }
+
+  /** Best-effort parse of a shell write (`echo .. > p`, `>> p`, `tee p`) to a path. Returns the target + content. */
+  private detectWrite(command: string): { path: string; content: string } | null {
+    const tee = command.match(/\btee\s+(?:-a\s+)?(\S+)/);
+    const redir = command.match(/>>?\s*(\S+)/);
+    const path = tee?.[1] ?? redir?.[1];
+    if (!path || path.startsWith("&") || path === "/dev/null") return null;
+    const echo = command.match(/\b(?:echo|printf)\s+(.*?)\s*(?:\||>>?|\btee\b)/s);
+    const content = echo ? echo[1].replace(/^['"]|['"]$/g, "") : "(written by the agent)";
+    return { path, content: `${content}\n` };
   }
 }
