@@ -1,7 +1,7 @@
-import type { ConsoleEvent } from "../../shared/types.js";
+import type { AppEvent } from "../../shared/types.js";
 import { addAudit } from "./store.js";
 
-type Listener = (event: ConsoleEvent) => void;
+type Listener = (event: AppEvent) => void;
 const listeners = new Set<Listener>();
 
 export function subscribe(listener: Listener): () => void {
@@ -9,7 +9,7 @@ export function subscribe(listener: Listener): () => void {
   return () => listeners.delete(listener);
 }
 
-export function emit(event: ConsoleEvent): void {
+export function emit(event: AppEvent): void {
   if (event.type === "audit") {
     addAudit({ actor: event.actor, action: event.action, detail: event.detail, ts: event.ts });
   }
