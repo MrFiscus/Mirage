@@ -5,6 +5,7 @@ import { emit } from "../core/events.js";
 import { getIncident, getSession, listIncidents, lookupCaller, saveSession } from "../core/store.js";
 import { approve, reject } from "../defense/approval.js";
 import { incidentViewFor } from "./disclosure.js";
+import { attachMockNotificationBridge, type DefenderNotifier } from "./outbound.js";
 import { getOutboundCall } from "./outbound.js";
 import { MAX_CODE_ATTEMPTS, type VerificationService } from "./verification.js";
 
@@ -67,7 +68,10 @@ function resolveSession(body: Record<string, unknown>): CallSession | { error: s
   return session;
 }
 
-export function voiceRouter(verification: VerificationService): express.Router {
+export function voiceRouter(
+  verification: VerificationService,
+  notifications: Pick<DefenderNotifier, "getBriefing"> = attachMockNotificationBridge()
+): express.Router {
   const router = express.Router();
 
   router.post("/voice/init", express.json(), requireVoiceSecret, (request, response) => {
@@ -160,6 +164,22 @@ export function voiceRouter(verification: VerificationService): express.Router {
     }
     emit({ type: "disclosure", conversationId: session.conversationId, role: session.role, fields: Object.keys(view), allowed: true });
     return response.json({ allowed: true, role: session.role, incident: view });
+  });
+
+  router.post("/voice/tools/mirage-briefing", express.json(), requireVoiceSecret, (request, response) => {
+    const session = resolveSession(request.body ?? {});
+    if ("error" in session) return response.status(session.status).json({ allowed: false, message: session.error });
+    if (!session.verified) {
+      emit({ type: "disclosure", conversationId: session.conversationId, role: session.role, fields: [], allowed: false });
+      return response.json({ allowed: false, message: "Verify the caller before sharing the Mirage alert." });
+    }
+    const briefing = notifications.getBriefing(session.role);
+    if (!briefing) {
+      emit({ type: "disclosure", conversationId: session.conversationId, role: session.role, fields: [], allowed: false });
+      return response.json({ allowed: false, message: "No alert is available to this caller." });
+    }
+    emit({ type: "disclosure", conversationId: session.conversationId, role: session.role, fields: ["mirage_briefing"], allowed: true });
+    return response.json({ allowed: true, role: session.role, briefing });
   });
 
   // Analyst approves or rejects the pending fix out loud. Only on a call Batman placed about that incident,
