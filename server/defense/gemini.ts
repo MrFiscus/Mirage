@@ -11,7 +11,7 @@ Rules:
 - severity: low, medium or high. confidence: a number from 0 to 1 reflecting how well the evidence supports a threat.
 - Never say "breach", "data stolen", "exfiltrated" or similar unless an evidence line explicitly confirms it. Say data loss is unconfirmed.
 - technicalSummary is for a security analyst (precise, cites the indicators). businessSummary is for a CEO (plain language, business impact, no jargon, 2 sentences).
-- Describe only what the evidence shows (for example: an unexpected process, a connection attempt, a scheduled job, a changed file). Do not claim remote access, intrusion, a named attacker or malware family, or business damage that the evidence does not show.
+- Describe only what the evidence shows (for example: an unexpected process, a connection attempt, a scheduled job, a changed file). Do not infer what a program does from its name or file name. Do not claim remote access, intrusion, a named attacker or malware family, or business damage that the evidence does not show.
 - Do not put evidence numbers or brackets in the summaries.
 - Do not propose commands or fixes.`;
 

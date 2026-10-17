@@ -12,7 +12,11 @@ function spawnRogue() {
 }
 
 const mode = process.argv[2] || "inject";
-if (mode === "respawn") {
+if (mode === "low") {
+  // Low tier: an unapproved scheduled task appears. No process, no network, no file changes.
+  fs.mkdirSync("cron", { recursive: true });
+  fs.writeFileSync("cron/updater.cron", "0 3 * * * /tmp/updater.sh # simulated, never executed\n");
+} else if (mode === "respawn") {
   spawnRogue();
 } else {
   spawnRogue();

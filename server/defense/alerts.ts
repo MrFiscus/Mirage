@@ -28,7 +28,9 @@ export function detect(t: Telemetry, id: string): Incident | null {
   if (signalCount(s) === 0) return null;
   return {
     id,
-    title: "Suspicious activity on acme-payroll-01",
+    title: s.rogueProcess || s.unknownOutbound.length
+      ? "Unknown program contacting an outside address on acme-payroll-01"
+      : s.integrityFailed ? "Application files changed on acme-payroll-01" : "Unapproved scheduled task on acme-payroll-01",
     status: "detected",
     severity: "low",
     confidence: 0,

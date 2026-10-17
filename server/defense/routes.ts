@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { approve } from "./approval.js";
+import { approve, reject } from "./approval.js";
 import { analystPhone } from "./apply.js";
 import { audit } from "./run.js";
 import { getIncident } from "./core.js";
@@ -11,10 +11,17 @@ const SCENARIOS = {
   "1": "Virus, fix passes the clone check, waits for analyst APPROVE",
   "2": "Virus, proposed fix is harmful, clone check rejects it",
   "3": "Virus, low-risk fix passes the clone check and auto-applies",
+  low: "Low tier alert: unapproved scheduled task, fixed automatically",
+  high: "High tier alert: unknown program contacting outside address, needs analyst approval",
 } as const;
 
 defenseRouter.get("/defense/info", (_req, res) =>
-  res.json({ backend: process.env.SANDBOX_BACKEND === "daytona" ? "daytona" : "local", scenarios: SCENARIOS }));
+  res.json({
+    backend: process.env.SANDBOX_BACKEND === "daytona" ? "daytona" : "local",
+    investigator: process.env.INVESTIGATOR === "gemini" && process.env.GEMINI_API_KEY ? "gemini" : "rules",
+    planner: "scripted (Droid placeholder)",
+    scenarios: SCENARIOS,
+  }));
 
 // "Start scenario": returns at once with the incident id; progress arrives as ConsoleEvents over the WebSocket.
 defenseRouter.post("/defense/scenario/:id/start", (req, res) => {
@@ -39,6 +46,14 @@ defenseRouter.post("/defense/approve", async (req, res) => {
 defenseRouter.post("/defense/demo-approve/:incidentId", async (req, res) => {
   try {
     await approve(req.params.incidentId, analystPhone());
+    res.json({ status: getIncident(req.params.incidentId)?.status });
+  } catch (e) { res.status(409).json({ error: (e as Error).message }); }
+});
+
+// Demo button: the analyst declines the fix.
+defenseRouter.post("/defense/demo-reject/:incidentId", async (req, res) => {
+  try {
+    await reject(req.params.incidentId, analystPhone());
     res.json({ status: getIncident(req.params.incidentId)?.status });
   } catch (e) { res.status(409).json({ error: (e as Error).message }); }
 });

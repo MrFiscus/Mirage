@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { signalsFrom } from "../alerts.js";
-import { approve } from "../approval.js";
+import { approve, reject } from "../approval.js";
 import { decide } from "../decision.js";
 import { RuleInvestigator, clean } from "../investigator.js";
 import { getIncident, onEvent, smsLog } from "../core.js";
@@ -74,6 +74,25 @@ describe("decision table", () => {
 });
 
 describe("scenarios", () => {
+  it("low tier: minor event, rated low, fixed automatically", async () => {
+    const inc = await startScenario("low"); cleanups.push(() => cleanup(inc.id));
+    const got = getIncident(inc.id)!;
+    expect(got.title).toMatch(/scheduled task/);
+    expect(got.severity).toBe("low");
+    expect(got.status).toBe("resolved");
+    expect(got.proposedFix?.drastic).toBe(false);
+    const actions = eventLog.filter((e) => e.type === "audit").map((e) => (e as { action: string }).action);
+    for (const a of ["query.processes", "query.network", "query.schedule", "query.health", "fix.planned", "voice.briefing_ready"]) expect(actions).toContain(a);
+  }, 60_000);
+  it("high tier: waits for approval; analyst Reject closes it without touching the machine", async () => {
+    const inc = await startScenario("high"); cleanups.push(() => cleanup(inc.id));
+    expect(getIncident(inc.id)?.status).toBe("awaiting_approval");
+    expect(getIncident(inc.id)?.severity).toBe("high");
+    await expect(reject(inc.id, "+15550001001")).rejects.toThrow(/analyst/); // CEO cannot
+    await reject(inc.id, "+15550001002");
+    expect(getIncident(inc.id)?.status).toBe("fix_rejected");
+    await expect(approve(inc.id, "+15550001002")).rejects.toThrow();       // cannot approve after rejecting
+  }, 60_000);
   it("1: waits for approval, rejects non-analyst, resolves after analyst approves", async () => {
     const inc = await startScenario("1"); cleanups.push(() => cleanup(inc.id));
     expect(getIncident(inc.id)?.status).toBe("awaiting_approval");
