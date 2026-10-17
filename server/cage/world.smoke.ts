@@ -26,7 +26,7 @@ async function main(): Promise<void> {
       const r = await vm.exec(cmd);
       console.log(`\n# ${label}\n$ ${cmd}\n[exit ${r.code}] ${r.stdout.trim().slice(0, 300)}`);
     }
-    console.log("\nExpect: in-scope exit 0 with content; out-of-scope non-zero (permission denied) when backstop=os-user.");
+    console.log("\nExpect: in-scope exit 0 with the seeded tree; out-of-scope non-zero (not on the box — the mirage serves that world). The harness scope guard also refuses out-of-scope calls before they run.");
   } finally {
     await vm.destroy();
     console.log("\nVM destroyed.");
