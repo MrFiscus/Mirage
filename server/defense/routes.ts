@@ -1,7 +1,7 @@
 import { Router } from "express";
-import { approve } from "./approval";
-import { startScenario } from "./orchestrator";
-import { getIncident } from "./mocks/core";
+import { approve } from "./approval.js";
+import { startScenario } from "./orchestrator.js";
+import { getIncident } from "./mocks/core.js";
 
 export const defenseRouter = Router();
 

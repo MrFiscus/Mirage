@@ -1,4 +1,4 @@
-import type { FixPlan } from "./contracts";
+import type { FixPlan } from "./contracts.js";
 
 export type Decision = { action: "apply" | "await_approval" | "reject"; reason: string };
 

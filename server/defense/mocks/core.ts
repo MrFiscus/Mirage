@@ -1,6 +1,6 @@
 // Stand-in for Person 3's shared core API. Delete this file when the real core lands
 // and point imports in server/defense at it. Signatures match the CLAUDE.md contract.
-import type { Caller, ConsoleEvent, Incident } from "../contracts";
+import type { Caller, ConsoleEvent, Incident } from "../contracts.js";
 
 const incidents = new Map<string, Incident>();
 const listeners: ((e: ConsoleEvent) => void)[] = [];

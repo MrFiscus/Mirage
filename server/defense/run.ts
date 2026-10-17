@@ -1,6 +1,6 @@
-import type { FixPlan, Incident } from "./contracts";
-import { emit, getIncident, saveIncident } from "./mocks/core";
-import type { Sandbox } from "./sandbox";
+import type { FixPlan, Incident } from "./contracts.js";
+import { emit, getIncident, saveIncident } from "./mocks/core.js";
+import type { Sandbox } from "./sandbox/index.js";
 
 /** Live state for an incident between "awaiting approval" and "applied". */
 export interface RunContext { company: Sandbox; clone?: Sandbox; plan?: FixPlan; }

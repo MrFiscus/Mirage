@@ -1,4 +1,4 @@
-import type { ExecResult, Sandbox } from "./types";
+import type { ExecResult, Sandbox } from "./types.js";
 
 // Stub. Fill in with @daytonaio/sdk once DAYTONA_API_KEY exists, and measure clone speed first.
 export class DaytonaSandbox implements Sandbox {

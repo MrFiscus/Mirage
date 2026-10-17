@@ -1,4 +1,4 @@
-import type { FixPlan } from "./contracts";
+import type { FixPlan } from "./contracts.js";
 
 export interface FixPlanner { plan(scenario: string): Promise<FixPlan>; }
 

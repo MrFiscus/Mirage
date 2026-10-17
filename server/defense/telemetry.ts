@@ -1,4 +1,4 @@
-import type { Sandbox } from "./sandbox";
+import type { Sandbox } from "./sandbox/index.js";
 
 export interface HealthCheck { name: string; passed: boolean; detail?: string; }
 export interface Telemetry {

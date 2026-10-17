@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { signalsFrom } from "../alerts";
-import { approve } from "../approval";
-import { decide } from "../decision";
-import { RuleInvestigator, clean } from "../investigator";
-import { eventLog, getIncident, resetMockCore, smsLog } from "../mocks/core";
-import { cleanup, startScenario } from "../orchestrator";
-import { LocalSandbox, VIRUS_PATH } from "../sandbox";
-import { collectHealth, collectTelemetry, runQuery } from "../telemetry";
-import type { FixPlan } from "../contracts";
+import { signalsFrom } from "../alerts.js";
+import { approve } from "../approval.js";
+import { decide } from "../decision.js";
+import { RuleInvestigator, clean } from "../investigator.js";
+import { eventLog, getIncident, resetMockCore, smsLog } from "../mocks/core.js";
+import { cleanup, startScenario } from "../orchestrator.js";
+import { LocalSandbox, VIRUS_PATH } from "../sandbox/index.js";
+import { collectHealth, collectTelemetry, runQuery } from "../telemetry.js";
+import type { FixPlan } from "../contracts.js";
 
 beforeEach(() => resetMockCore());
 const cleanups: (() => Promise<void>)[] = [];

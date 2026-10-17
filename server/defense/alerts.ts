@@ -1,5 +1,5 @@
-import type { Incident } from "./contracts";
-import type { Telemetry } from "./telemetry";
+import type { Incident } from "./contracts.js";
+import type { Telemetry } from "./telemetry.js";
 
 const KNOWN_DESTINATIONS = ["10.0.0.5"];
 

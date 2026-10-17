@@ -1,14 +1,14 @@
-import { detect } from "./alerts";
-import { applyFix, analystPhone } from "./apply";
-import { runCloneCheck } from "./clonecheck";
-import { decide } from "./decision";
-import { RuleInvestigator, type Investigator } from "./investigator";
-import { ScriptedPlanner, type FixPlanner } from "./planner";
-import { createCompanyMachine, VIRUS_PATH } from "./sandbox";
-import { audit, runs, update } from "./run";
-import { sendSms } from "./mocks/core";
-import { collectTelemetry } from "./telemetry";
-import type { Incident } from "./contracts";
+import { detect } from "./alerts.js";
+import { applyFix, analystPhone } from "./apply.js";
+import { runCloneCheck } from "./clonecheck.js";
+import { decide } from "./decision.js";
+import { RuleInvestigator, type Investigator } from "./investigator.js";
+import { ScriptedPlanner, type FixPlanner } from "./planner.js";
+import { createCompanyMachine, VIRUS_PATH } from "./sandbox/index.js";
+import { audit, runs, update } from "./run.js";
+import { sendSms } from "./mocks/core.js";
+import { collectTelemetry } from "./telemetry.js";
+import type { Incident } from "./contracts.js";
 
 export interface ScenarioDeps {
   investigator?: Investigator;

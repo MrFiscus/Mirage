@@ -1,7 +1,7 @@
-import type { FixPlan } from "./contracts";
-import type { Sandbox } from "./sandbox";
-import { signalCount, signalsFrom } from "./alerts";
-import { collectHealth, collectTelemetry, type HealthCheck } from "./telemetry";
+import type { FixPlan } from "./contracts.js";
+import type { Sandbox } from "./sandbox/index.js";
+import { signalCount, signalsFrom } from "./alerts.js";
+import { collectHealth, collectTelemetry, type HealthCheck } from "./telemetry.js";
 
 export interface CloneCheckReport {
   cloneCheck: NonNullable<FixPlan["cloneCheck"]>;

@@ -1,6 +1,6 @@
 import express from "express";
-import { defenseRouter } from "./routes";
-import { eventLog } from "./mocks/core";
+import { defenseRouter } from "./routes.js";
+import { eventLog } from "./mocks/core.js";
 
 const app = express();
 app.use(express.json());

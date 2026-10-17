@@ -1,6 +1,6 @@
-import { applyFix } from "./apply";
-import { audit, mustGet, update } from "./run";
-import { lookupCaller } from "./mocks/core";
+import { applyFix } from "./apply.js";
+import { audit, mustGet, update } from "./run.js";
+import { lookupCaller } from "./mocks/core.js";
 
 /** Called by the inbound-SMS handler (Photon) once it exists, and by POST /defense/approve. */
 export async function approve(incidentId: string, fromPhone: string): Promise<void> {

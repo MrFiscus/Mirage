@@ -1,6 +1,6 @@
-import type { Incident } from "./contracts";
-import { signalCount, signalsFrom } from "./alerts";
-import type { Telemetry } from "./telemetry";
+import type { Incident } from "./contracts.js";
+import { signalCount, signalsFrom } from "./alerts.js";
+import type { Telemetry } from "./telemetry.js";
 
 export interface Investigation {
   severity: Incident["severity"];

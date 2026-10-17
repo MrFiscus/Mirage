@@ -1,7 +1,7 @@
-import { signalCount, signalsFrom } from "./alerts";
-import { collectTelemetry } from "./telemetry";
-import { audit, mustGet, runs, update } from "./run";
-import { sendSms } from "./mocks/core";
+import { signalCount, signalsFrom } from "./alerts.js";
+import { collectTelemetry } from "./telemetry.js";
+import { audit, mustGet, runs, update } from "./run.js";
+import { sendSms } from "./mocks/core.js";
 
 export const analystPhone = () => process.env.ANALYST_PHONE ?? "+15550000002";
 

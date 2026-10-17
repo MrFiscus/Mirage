@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExecResult, Sandbox } from "./types";
+import type { ExecResult, Sandbox } from "./types.js";
 
 const SIM_DIR = fileURLToPath(new URL("../../../sim", import.meta.url));
 const KEY_FILES = ["lib.cjs", "config.json", "server.cjs"];
