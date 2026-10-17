@@ -109,7 +109,10 @@ export async function runCageFleet(opts: FleetOptions): Promise<FleetResult[]> {
   let tokens = 0;
   let overBudget = false;
 
-  opts.emit({ type: "audit", actor: "fleet", action: "fleet.starting", detail: `${members.length} agents (${members.filter((m) => m.attacker === "droid").length} droid, ${members.filter((m) => m.attacker === "scripted").length} scripted), ${concurrency} at a time`, ts: Date.now() });
+  // When the pool is at least as wide as the fleet, every agent is one wave: fire all VM creations at once (no ramp).
+  // Otherwise keep a small first-wave ramp so a capped pool does not hit Daytona's API all in the same instant.
+  const allAtOnce = concurrency >= members.length;
+  opts.emit({ type: "audit", actor: "fleet", action: "fleet.starting", detail: `${members.length} agents (${members.filter((m) => m.attacker === "droid").length} droid, ${members.filter((m) => m.attacker === "scripted").length} scripted), ${allAtOnce ? "all at once" : `${concurrency} at a time`}`, ts: Date.now() });
 
   await runPool(members, concurrency, async (member, i) => {
     const r = await runOne(member, i, width, { emit: opts.emit, watcherOn, caps });
@@ -123,7 +126,7 @@ export async function runCageFleet(opts: FleetOptions): Promise<FleetResult[]> {
         opts.emit({ type: "audit", actor: "fleet", action: "fleet.budget", detail: `token budget ${opts.tokenBudget} reached (${tokens} used); not starting any more agents`, ts: Date.now() });
       }
     }
-  }, () => overBudget || (opts.shouldStop?.() ?? false));
+  }, () => overBudget || (opts.shouldStop?.() ?? false), allAtOnce ? 0 : 300);
 
   const notRun = members.length - finished;
   opts.emit({ type: "audit", actor: "fleet", action: "fleet.complete", detail: `${finished} of ${members.length} agents watched${notRun ? ` (${notRun} not run: ${overBudget ? "token budget" : "stopped"})` : ""}`, ts: Date.now() });

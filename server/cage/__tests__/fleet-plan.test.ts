@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 // The /cage/fleet/start query parser (Person A). Covers the three dashboard modes, the FACTORY_API_KEY refusal for
 // live modes, the n validation, the notifier guard, and that the legacy forms still parse.
-import { planFleet, modeSplit, BLOCKED_SCENARIOS, ROGUE_SCENARIOS, NOTIFIER_LIVE_MAX_AGENTS } from "../fleet-plan.js";
+import { planFleet, chooseConcurrency, modeSplit, BLOCKED_SCENARIOS, ROGUE_SCENARIOS, NOTIFIER_LIVE_MAX_AGENTS } from "../fleet-plan.js";
 import type { FleetMember } from "../fleet.js";
+
+const droids = (n: number): FleetMember[] => Array.from({ length: n }, () => ({ attacker: "droid" as const, honestEnv: "vm" as const }));
+const scripts = (n: number): FleetMember[] => Array.from({ length: n }, () => ({ attacker: "scripted" as const, honestEnv: "vm" as const }));
 
 const KEY = { FACTORY_API_KEY: "test-key" };
 const kinds = (members: FleetMember[]) => members.map((m) => m.attacker);
@@ -76,6 +79,40 @@ describe("planFleet: notifier guard and legacy forms", () => {
     const counts = planFleet({ droid: "2", scripted: "1" }, KEY);
     expect(counts.ok).toBe(true);
     if (counts.ok) expect(counts.members).toHaveLength(3);
+  });
+});
+
+describe("chooseConcurrency: CPU budget for scripted, local RAM cap for live Droid", () => {
+  const KEYED = { FACTORY_API_KEY: "k" };
+
+  it("scripted-only defaults to the CPU budget (250/4 - headroom = 60 on Tier 3)", () => {
+    expect(chooseConcurrency(scripts(1000), {}, KEYED)).toBe(60);
+  });
+
+  it("any live Droid in the fleet drops the default to the local cap (8)", () => {
+    expect(chooseConcurrency(droids(1000), {}, KEYED)).toBe(8);
+    // mixed also counts as having live Droid
+    expect(chooseConcurrency([...droids(500), ...scripts(500)], {}, KEYED)).toBe(8);
+  });
+
+  it("without a Factory key, droid members fall back to scripted, so the CPU budget applies", () => {
+    expect(chooseConcurrency(droids(1000), {}, {})).toBe(60);
+  });
+
+  it("?concurrency overrides either default", () => {
+    expect(chooseConcurrency(droids(1000), { concurrency: "20" }, KEYED)).toBe(20);
+    expect(chooseConcurrency(scripts(1000), { concurrency: "5" }, KEYED)).toBe(5);
+  });
+
+  it("CAGE_MAX_VMS overrides the scripted default but CAGE_MAX_LIVE_DROID caps live Droid", () => {
+    expect(chooseConcurrency(scripts(1000), {}, { ...KEYED, CAGE_MAX_VMS: "30" })).toBe(30);
+    expect(chooseConcurrency(droids(1000), {}, { ...KEYED, CAGE_MAX_LIVE_DROID: "4" })).toBe(4);
+  });
+
+  it("scales with the CPU budget and never exceeds the fleet size or drops below 1", () => {
+    expect(chooseConcurrency(scripts(1000), {}, { ...KEYED, CAGE_CPU_BUDGET: "1000", CAGE_VCPU_PER_VM: "4" })).toBe(248);
+    expect(chooseConcurrency(scripts(5), {}, KEYED)).toBe(5); // capped to the fleet
+    expect(chooseConcurrency(scripts(1), {}, KEYED)).toBe(1);
   });
 });
 

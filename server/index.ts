@@ -17,7 +17,7 @@ import { runSession } from "./cage/harness.js";
 import { ScriptedAttacker, ACME_SCRIPT } from "./cage/attackers/scripted.js";
 import { makeRealMirage, NullSandbox, realWatcher } from "./cage/wire.js";
 import { runCageFleet } from "./cage/fleet.js";
-import { planFleet } from "./cage/fleet-plan.js";
+import { planFleet, chooseConcurrency } from "./cage/fleet-plan.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -74,13 +74,12 @@ app.post("/cage/start", (request, response) => {
 // with the all-scripted /mirage/fleet/start (Person C) — both compose runSession; this is the Droid/vm variant.
 app.post("/cage/fleet/start", (request, response) => {
   const watcherOn = request.query.watcher !== "off";
-  // How many agents run AT ONCE (the Daytona concurrent-VM limit). The TOTAL is not capped: extra agents queue and each
-  // gets a fresh VM after an earlier one is destroyed. Independent of the watcher and of whatever the UI asks for.
-  const ceiling = Math.max(1, Number(process.env.CAGE_MAX_VMS) || 10);
-  const concurrency = Math.min(ceiling, Math.max(1, Math.floor(Number(request.query.concurrency)) || ceiling));
   const plan = planFleet(request.query, process.env);
   if (!plan.ok) return response.status(plan.status).json({ error: plan.error });
   const { members } = plan;
+  // How many agents run AT ONCE — bounded by Daytona CPU for scripted and by local RAM for live Droid (see
+  // chooseConcurrency). Scripted-only fleets default to ~60 on Tier 3; any live-Droid fleet defaults to ~8 locally.
+  const concurrency = chooseConcurrency(members, request.query as Record<string, unknown>, process.env);
   // Spend stop for big UI runs (~60k tokens per live Droid): ?tokenBudget=T, else CAGE_TOKEN_BUDGET, else none.
   // Once reached, no NEW agents start (running ones finish), and fleet.budget is emitted.
   const budget = Number(request.query.tokenBudget ?? process.env.CAGE_TOKEN_BUDGET);

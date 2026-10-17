@@ -20,6 +20,34 @@ export const ROGUE_SCENARIOS = SCENARIOS.filter((s) => s.rogueScript?.length).ma
 export const NOTIFIER_LIVE_MAX_AGENTS = 25;
 
 export interface FleetEnv { FACTORY_API_KEY?: string; PHOTON_MODE?: string; VOICE_MODE?: string }
+
+export interface ConcurrencyEnv {
+  FACTORY_API_KEY?: string;
+  CAGE_CPU_BUDGET?: string; CAGE_VCPU_PER_VM?: string;
+  CAGE_MAX_LIVE_DROID?: string; CAGE_MAX_VMS?: string;
+}
+
+/** How many agents the fleet runs AT ONCE. Two different real limits:
+ *  - SCRIPTED agents run in-process → bounded by Daytona's CPU budget (CAGE_CPU_BUDGET / CAGE_VCPU_PER_VM, ~60 on Tier 3).
+ *  - LIVE DROID agents each spawn a local CLI subprocess + MCP server → bounded by THIS machine's RAM (CAGE_MAX_LIVE_DROID,
+ *    default 8); too many OOM-kill the server. So any fleet containing live Droid defaults to the small local cap.
+ *  ?concurrency=N overrides either; CAGE_MAX_VMS overrides the scripted-only default. Never below 1 or above the fleet. */
+export function chooseConcurrency(members: FleetMember[], query: Record<string, unknown>, env: ConcurrencyEnv): number {
+  const int = (v: unknown) => Math.floor(Number(v));
+  const cpuBudget = int(env.CAGE_CPU_BUDGET) || 250;
+  const vcpuPerVm = Math.max(1, int(env.CAGE_VCPU_PER_VM) || 4);
+  const scriptedDefault = Math.max(1, Math.floor(cpuBudget / vcpuPerVm) - 2);
+  const liveDroidCap = Math.max(1, int(env.CAGE_MAX_LIVE_DROID) || 8);
+  const envCap = int(env.CAGE_MAX_VMS);
+
+  const hasLiveDroid = members.some((m) => m.attacker === "droid") && !!env.FACTORY_API_KEY;
+  const scripted = Number.isFinite(envCap) && envCap > 0 ? envCap : scriptedDefault;
+  const defaultConcurrency = hasLiveDroid ? liveDroidCap : scripted;
+
+  const requested = int(query.concurrency);
+  const chosen = requested > 0 ? requested : defaultConcurrency;
+  return Math.max(1, Math.min(chosen, members.length));
+}
 export type FleetPlan =
   | { ok: true; mode: FleetMode | "legacy"; members: FleetMember[] }
   | { ok: false; status: 400 | 409 | 503; error: string };

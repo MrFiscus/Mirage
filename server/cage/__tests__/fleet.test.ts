@@ -93,6 +93,18 @@ describe("scale: worker pool, budget, stop", () => {
     expect(peak).toBeGreaterThan(1); // it really did run in parallel
   });
 
+  it("when the pool is at least as wide as the fleet, every start fires at once (no ramp)", async () => {
+    const { runPool } = await import("../fleet.js");
+    let peak = 0, inFlight = 0;
+    // 1000 items, pool of 1000, stagger 0: all should enter fn before any completes -> peak === 1000 (all at once).
+    await runPool(Array.from({ length: 1000 }, (_, i) => i), 1000, async () => {
+      inFlight++; peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+    }, () => false, 0);
+    expect(peak).toBe(1000);
+  });
+
   it("more agents than the concurrency limit all run, each as its own session (the 10-VM limit is not a total cap)", async () => {
     const { membersFromAgents, runCageFleet } = await import("../fleet.js");
     const events: import("../../../shared/types.js").MirageEvent[] = [];
