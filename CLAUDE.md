@@ -35,9 +35,9 @@ Each sponsor must do real work in the running product, not be decoration.
 | Phone line + texts | Photon 2.0 (spectrum-ts for texts, SIP for voice) |
 | Voice agent | ElevenLabs Agents, inbound SIP + conversation initiation webhook |
 | Voice fallback | ElevenLabs Twilio integration, only if the Photon SIP join fails |
-| Investigator | Claude via Anthropic TypeScript SDK |
-| Fix agent | Factory Droid SDK (`@factory/droid-sdk`) |
-| Sandboxes | Daytona (company machine + clone for testing fixes) |
+| Investigator | Claude via Anthropic TypeScript SDK. **(Evan)** Running now: Gemini `gemini-3.5-flash-lite` (free tier) behind the same interface, with built-in rules as fallback. Do not say "Claude investigator" on Devpost until it is switched. |
+| Fix agent | Factory Droid SDK (`@factory/droid-sdk`). **(Evan)** No key yet: a scripted planner stands in, labelled "Droid placeholder" on screen. |
+| Sandboxes | Daytona (company machine + clone for testing fixes). **(Evan)** Working with `@daytonaio/sdk`; local temp-dir sandbox as fallback. |
 | Evals | Chalk |
 | Server | Express + WebSocket + SQLite, hosted on a small cloud VM |
 | Console | React, live updates over WebSocket |
@@ -50,6 +50,7 @@ batman/
   server/core/      Person 3: event bus, db, sessions, audit log
   server/voice/     Person 1: ElevenLabs webhook, verification, case tools
   server/defense/   Person 2: alerts, investigator, sandboxes, Droid, approvals
+    demo-ui/        (Evan) judge-facing ticketing demo served at /demo
   console/          Person 3: React live console
   sim/              Person 2: test app + harmless simulated virus
   data/             Person 3: synthetic users, incidents, labeled events
@@ -135,6 +136,30 @@ Until the real piece exists, each lane mocks what it needs (e.g. `emit = console
 - Second scenario: deliberately harmful fix that the clone check rejects.
 - Done when: one button runs the full loop on the console, both scenarios work.
 
+#### Person 2 status (Evan)
+
+Done, tested, on `main`:
+- **Run it:** `npm run dev`, open `http://localhost:8787/demo`. Two buttons: **Low tier alert** (unapproved scheduled task; AI rates it low; Batman fixes it itself) and **High tier alert** (unknown program + outside connection + changed file; needs analyst Approve/Reject in the ticket). Plain-language ticket queue with filler tickets and a live activity feed naming each system used.
+- CLI: `npm run scenario low|high|1|2|3 [-- --approve]`. Scenarios: `1` approve path, `2` harmful fix rejected by the clone check, `3` low-risk auto-apply. Person 3's console at `/` also has a demo panel for 1/2/3.
+- Loop: simulated virus, alert, read-only queries, investigator (Gemini or rules), scripted fix plan, test on a clone with health checks before/after, decision rule, approve/reject, apply, verify clean.
+- Engine uses the real core (`server/core`) through `server/defense/core.ts`; `mountDefense()` in `server/index.ts` mounts routes and `/demo`.
+- Routes: `POST /defense/scenario/:id/start` (returns at once; progress arrives as ConsoleEvents), `POST /defense/approve` `{incidentId, phone}`, `POST /defense/demo-approve/:id`, `POST /defense/demo-reject/:id`, `GET /defense/info`.
+- Tests: `npm test` (24): engine, both sandbox backends, Gemini failure modes with mocked network, and voice tools reading real defense incidents (role views, refusals, lockout).
+
+Config (`.env`, gitignored; names in `.env.example`):
+- `SANDBOX_BACKEND=daytona` + `DAYTONA_API_KEY`. Default is local. **On Windows use Daytona**: the local sandbox needs Linux tools (`sh`, `ps`, `grep`).
+- `INVESTIGATOR=gemini` + `GEMINI_API_KEY` (+ optional `GEMINI_MODEL`). Default is rules. Both switches are opt-in so tests never spend sandboxes or API quota.
+- `ANALYST_PHONE` (default `+15550001002`, Jordan Bell in `data/users.json`) receives the analyst texts and is the approver for the demo buttons.
+
+Findings:
+- Daytona native fork is not available on our account. The clone is a second sandbox that replays the first one's files and running program. Create is about 1.5 s; a full run is about 8 to 15 s.
+- Gemini output is checked in code: schema-constrained, may only cite real telemetry lines by number, falls back to rules on bad JSON, rate limits, or any "breach"/"data stolen" wording. Told not to infer a program's purpose from its name.
+
+Open:
+- Droid: needs a Factory key; otherwise keep the scripted plan (cut order allows it).
+- Photon: the defense engine's `sendSms` in `server/defense/core.ts` is still a stub (log + `sms.sent`). No inbound APPROVE text yet; the demo uses on-screen buttons.
+- Windows runs: one machine-health bug (backslash paths) is fixed. A second report (fix failing on the clone on Windows) is not yet diagnosed; the clone check now names which indicator remains.
+
 ### Person 3: Core, console, data, evals, submission
 - First (everyone depends on it): server skeleton with `emit`, sessions, audit log, deployed to a cloud VM with a public URL for the webhook.
 - `data/`: `users.json` (CEO, analyst, HR, developer with phone numbers), 3 synthetic incidents, 50 to 100 labeled events (benign, virus, near misses).
@@ -166,7 +191,7 @@ Until the real piece exists, each lane mocks what it needs (e.g. `emit = console
 - ElevenLabs plan allows SIP and enough concurrent calls.
 - Outbound voice call to the analyst (fallback: text only, analyst calls in).
 - Droid SDK running inside or against a Daytona sandbox.
-- Daytona clone/snapshot speed is fast enough for a live demo.
+- ~~Daytona clone/snapshot speed is fast enough for a live demo.~~ **(Evan)** Verified: fork unsupported on our account, replay clone works, full run 8 to 15 s.
 - Which Chalk features fit; how many sponsor challenges one project may enter.
 
 ## Collaboration rules
