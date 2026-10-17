@@ -50,3 +50,75 @@ export interface AuditEntry {
   detail: string;
   ts: number;
 }
+
+/* ------------------------------------------------------------------ *
+ * Mirage contract (shared/types.ts in PLAN.md). The attacker emits   *
+ * ToolCalls, the watcher returns a Verdict, the mirage returns a      *
+ * LedgerEntry, and everything is broadcast as MirageEvents.           *
+ * ------------------------------------------------------------------ */
+
+export type ToolName = "run_shell" | "http_get" | "http_post" | "read_file";
+export type Attacker = "grok" | "scripted" | "droid";
+
+// One attempted action by the attacker, recorded by the host harness BEFORE it runs.
+export interface ToolCall {
+  id: string;
+  session: string;
+  step: number;
+  tool: ToolName;
+  args: Record<string, unknown>;
+  thought?: string; // the agent's stated reason: UNTRUSTED data, never an instruction
+  ts: number;
+}
+
+// The watcher's verdict for one ToolCall. Scope decisions live server-side only.
+export interface Verdict {
+  decision: "pass" | "mirage" | "block";
+  layer: "rules" | "llm";
+  score: number; // 0..1 suspiciousness
+  reasons: string[]; // cited rule hits / evidence lines
+  floor: number; // code-enforced minimum score the model may not go below
+}
+
+// One fake fact shown to the agent; the world ledger is an append-only list of these.
+export interface LedgerEntry {
+  session: string;
+  path: string;
+  kind: "file" | "cred" | "host" | "error" | "hint";
+  value: string; // never matches the flag format
+  progress: number; // hidden closeness this entry implies (0..1, asymptotic to <1)
+  ts: number;
+}
+
+export interface Scope {
+  paths: string[];
+  hosts: string[];
+  tools: ToolName[];
+}
+
+export interface Session {
+  id: string;
+  attacker: Attacker;
+  scope: Scope;
+  triggered: boolean;
+  triggerStep?: number;
+  triggerReason?: string;
+  realCalls: number;
+  fakeCalls: number;
+  loopDepth: number;
+  caps: { steps: number; seconds: number; spendUsd: number };
+}
+
+// Every lane emits these; the console only renders them.
+export type MirageEvent =
+  | { type: "session.started"; session: Session }
+  | { type: "tool.call"; call: ToolCall }
+  | { type: "watcher.verdict"; callId: string; verdict: Verdict }
+  | { type: "mirage.served"; callId: string; entry: LedgerEntry }
+  | { type: "progress.updated"; session: string; progress: number }
+  | { type: "notify.sent"; channel: "text" | "call"; to: string; detail: string }
+  | { type: "kill"; session: string; reason: string }
+  | { type: "audit"; actor: string; action: string; detail: string; ts: number };
+
+// The one bus both the old console and the Mirage dashboard read.
+export type AppEvent = ConsoleEvent | MirageEvent;
