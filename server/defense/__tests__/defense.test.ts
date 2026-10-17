@@ -178,7 +178,7 @@ describe("demo playbooks on Robin's PC", () => {
     expect(getIncident(inc.id)!.status).toBe("awaiting_approval");
     expect(getIncident(inc.id)!.severity).toBe("high");
     const text = agentSteps(inc.id).map((s) => s.data.text).join(" | ");
-    expect(text).toMatch(/Reykjavik.*location is new.*Impossible travel.*reputation: clean.*live session.*Alerted the on-call analyst/);
+    expect(text).toMatch(/Reykjavik.*location is new.*Impossible travel.*reputation: clean.*live session.*Calling the on-call analyst/);
     const company = runs.get(inc.id)!.company;
     expect((await company.exec("cat pc/policy/disabled-accounts.txt")).stdout).toBe("");   // nothing touched before approval
     await expect(approve(inc.id, "+15550001001")).rejects.toThrow(/analyst/);

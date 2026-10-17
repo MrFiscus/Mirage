@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { cp, mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
+import { cp, lstat, mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -70,7 +70,8 @@ export class LocalSandbox implements Sandbox {
     const id = randomBytes(4).toString("hex");
     const root = await mkdtemp(join(tmpdir(), "batman-"));
     const dir = join(root, "app");
-    await cp(this.dir, dir, { recursive: true });
+    // Skip the decoy sensor's Unix sockets: fs.cp cannot copy them, and the respawned sink re-creates its own.
+    await cp(this.dir, dir, { recursive: true, filter: async (src) => !(await lstat(src)).isSocket() });
     const copy = new LocalSandbox(id, dir);
     if (existsSync(join(this.dir, ".run", "rogue.pid"))) {
       await rm(join(dir, ".run", "rogue.pid"), { force: true });
