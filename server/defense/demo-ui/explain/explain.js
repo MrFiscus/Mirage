@@ -10,8 +10,9 @@ const STATUS = {
 const WHO = {
   batman: ["Batman", "w-batman"], daytona: ["Daytona", "w-daytona"], gemini: ["Gemini", "w-gemini"], rules: ["Rules", "w-batman"],
   edr: ["Endpoint (EDR)", "w-daytona"], idp: ["Identity", "w-daytona"], virustotal: ["VirusTotal (placeholder)", "w-elevenlabs"],
-  ipinfo: ["IPinfo (placeholder)", "w-elevenlabs"], abuseipdb: ["AbuseIPDB (placeholder)", "w-elevenlabs"], photon: ["Photon (demo mode)", "w-photon"],
-  droid: ["Droid (placeholder)", "w-droid"], analyst: ["Analyst", "w-analyst"], sim: ["Demo", "w-sim"], code: ["Guardrail (code)", "w-elevenlabs"],
+  ipinfo: ["IPinfo (placeholder)", "w-elevenlabs"], abuseipdb: ["AbuseIPDB (placeholder)", "w-elevenlabs"], photon: ["Photon", "w-photon"], elevenlabs: ["ElevenLabs", "w-photon"],
+  aiagent: ["AI agent (simulated)", "w-sim"], harness: ["Agent harness", "w-daytona"], sensor: ["Decoy sensor", "w-daytona"],
+  droid: ["Factory Droid", "w-droid"], scripted: ["Scripted plan (Droid placeholder)", "w-droid"], analyst: ["Analyst", "w-analyst"], sim: ["Demo", "w-sim"], code: ["Guardrail (code)", "w-elevenlabs"],
 };
 const ms = (n) => (n == null ? "" : n < 1000 ? `${n} ms` : `${(n / 1000).toFixed(1)} s`);
 const secs = (n) => `${(n / 1000).toFixed(2)} s`;
@@ -28,7 +29,7 @@ function slides() {
   for (const s of t.steps) {
     const d = s.data;
     switch (s.kind) {
-      case "machine.created": out.push({ key: "machine", who: "daytona", title: d.role === "pc" ? "Batman connects to Robin's PC" : "Batman connects to the company machine", at: at(s), ms: s.ms, d }); break;
+      case "machine.created": out.push({ key: "machine", who: "daytona", title: d.role === "pc" ? "Batman connects to Robin's PC" : d.role === "build runner" ? "Batman connects to the build runner where the AI agent works" : "Batman connects to the company machine", at: at(s), ms: s.ms, d }); break;
       case "threat.started": out.push({ key: "threat", who: "sim", title: d.text ? "The demo sets up the alert" : "A simulated threat runs on it", at: at(s), ms: s.ms, d }); break;
       case "agent": out.push({ key: `agent-${s.at}`, kind: "agent", who: d.who, title: d.text, at: at(s), ms: s.ms, d }); break;
       case "queries": out.push({ key: "queries", who: "batman", title: "Batman inspects the machine with read-only queries", at: at(s), ms: s.ms, d }); break;
@@ -42,7 +43,7 @@ function slides() {
         out.push({ key: "guard", who: viaGemini ? "code" : "rules", title: viaGemini ? "Guardrails check Gemini's answer" : "Built-in rules set the severity", at: at(s), d });
         break;
       }
-      case "plan": out.push({ key: "plan", who: "droid", title: "A fix is planned", at: at(s), ms: s.ms, d }); break;
+      case "plan": out.push({ key: "plan", who: d.engine === "droid" ? "droid" : "scripted", title: "A fix is planned", at: at(s), ms: s.ms, d }); break;
       case "clone.created": out.push({ key: "clone", who: "daytona", title: "A copy of the machine is made to test the fix", at: at(s), ms: s.ms, d }); break;
       case "clone.checked": out.push({ key: "checked", who: "daytona", title: "The fix runs on the copy, then health checks", at: at(s), ms: s.ms, d }); break;
       case "decision": out.push({ key: "decision", who: "batman", title: "Batman decides what happens next", at: at(s), d }); break;
@@ -117,7 +118,8 @@ function body(sl) {
         <dt>Final severity</dt><dd class="big">${esc(PRIORITY[d.severity])} <span style="font-size:16px;font-weight:400;color:var(--muted)">· ${Math.round(d.confidence * 100)}% confident</span></dd></dl>
         <div class="verdict ${cls}">${head}<small>${esc(g)}</small></div>`;
     }
-    case "plan": return `<p class="why">${d.text ? `<b>${esc(d.text)}.</b> ` : ""}In this build a scripted plan stands in for Factory Droid; every plan, scripted or Droid, must pass the same test before it can touch the real machine.</p>
+    case "plan": return `<p class="why">${d.text ? `<b>${esc(d.text)}.</b> ` : ""}${d.engine === "droid" ? "Factory Droid read the evidence and the machine layout and wrote these commands. It can only propose: it ran with every tool permission refused, and code raises its plan to a major change when the situation requires one." : "A scripted plan stands in for Factory Droid here."} Every plan, scripted or Droid, must pass the same test before it can touch the real machine.</p>
+      ${d.rationale ? `<p class="note"><b>Droid's reasoning:</b> ${esc(d.rationale)}</p>` : ""}${d.note ? `<p class="note">${esc(d.note)}</p>` : ""}
       <pre class="code">${d.commands.map(esc).join("\n")}</pre>
       <p class="note">${d.drastic ? "<b>Major change</b>, so a person must approve it." : "<b>Minor change</b>: if it passes the test, Batman may apply it on its own."}</p>`;
     case "clone": return `<p class="why">Batman never tests on the real machine. It makes a separate copy with everything on it, so the test is realistic.</p>
@@ -246,6 +248,7 @@ function render() {
     <b>HOW IT WORKS</b>
     <button class="low" data-tier="low" ${running ? "disabled" : ""}>Low tier alert</button>
     <button class="high" data-tier="high" ${running ? "disabled" : ""}>High tier alert</button>
+    <button class="agent" data-tier="agent" ${running ? "disabled" : ""}>AI agent alert</button>
     ${state.id ? `<button class="next" id="next" ${more ? "" : "disabled"}>${more ? "Next ▸" : running ? "Waiting for Batman…" : "Done"}</button>
       <span class="count">Step ${state.shown} of ${all.length}${running ? "+" : ""}</span>` : ""}
     <span class="chips">${state.info ? `<span class="chip">Machine: ${state.info.backend === "daytona" ? "Daytona" : "local sandbox"}</span><span class="chip">AI: ${state.info.investigator === "gemini" ? "Gemini" : "built-in rules"}</span>` : ""}
@@ -257,7 +260,7 @@ function render() {
     app.innerHTML = `<section class="card start"><h1>How Batman handles an alert</h1>
       <p>Pick an alert. The real engine runs it at full speed in the background; you step through what it did, one step at a time.</p>
       ${state.error ? `<p style="color:var(--bad)">${esc(state.error)}</p>` : ""}
-      <div class="actions"><button class="low-btn" data-tier="low">Low tier alert</button><button class="high-btn" data-tier="high">High tier alert</button></div></section>`;
+      <div class="actions"><button class="low-btn" data-tier="low">Low tier alert</button><button class="high-btn" data-tier="high">High tier alert</button><button class="agent-btn" data-tier="agent">AI agent alert</button></div></section>`;
     app.querySelectorAll("[data-tier]").forEach((b) => (b.onclick = () => start(b.dataset.tier)));
     return;
   }

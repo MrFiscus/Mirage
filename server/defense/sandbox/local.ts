@@ -11,6 +11,11 @@ const SIM_DIR = fileURLToPath(new URL("../../../sim", import.meta.url));
 const KEY_FILES = ["lib.cjs", "config.json", "server.cjs"];
 
 export const VIRUS_PATH = join(SIM_DIR, "virus.cjs");
+export const AGENT_PATH = join(SIM_DIR, "agent.cjs");
+
+/** Which simulated processes are alive on a machine, so a clone can re-create them under its own id. */
+export const LIVE_QUERY = '{ test -f .run/sink.pid && echo sink; ps -eo args | grep -q "[a]gent-keepalive-$BATMAN_SANDBOX_ID" && echo keepalive; } || true';
+export const respawnArgs = (live: string) => live.split("\n").map((s) => s.trim()).filter((s) => s === "sink" || s === "keepalive");
 
 export class LocalSandbox implements Sandbox {
   private constructor(readonly id: string, readonly dir: string) {}
@@ -71,14 +76,19 @@ export class LocalSandbox implements Sandbox {
       await rm(join(dir, ".run", "rogue.pid"), { force: true });
       await copy.runScript(VIRUS_PATH, "respawn");
     }
+    const agentProcs = respawnArgs((await this.exec(LIVE_QUERY)).stdout);
+    if (agentProcs.length) await copy.runScript(AGENT_PATH, `respawn ${agentProcs.join(" ")}`);
     return copy;
   }
 
   async destroy(): Promise<void> {
-    try {
-      const pid = Number(readFileSync(join(this.dir, ".run", "rogue.pid"), "utf8"));
-      if (pid) process.kill(pid);
-    } catch { /* no process */ }
+    for (const f of ["rogue.pid", "sink.pid"]) {
+      try {
+        const pid = Number(readFileSync(join(this.dir, ".run", f), "utf8"));
+        if (pid) process.kill(pid);
+      } catch { /* no process */ }
+    }
+    await this.exec('pkill -f "[a]gent-keepalive-$BATMAN_SANDBOX_ID" || true');
     await rm(resolve(this.dir, ".."), { recursive: true, force: true });
   }
 }

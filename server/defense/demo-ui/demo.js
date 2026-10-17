@@ -3,8 +3,9 @@ const app = document.querySelector("#app");
 const bar = document.querySelector("#presenter");
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[c]));
 const DONE = new Set(["resolved", "fix_rejected"]);
-const DEMO_PREFIXES = ["inc-low-", "inc-high-"];
+const DEMO_PREFIXES = ["inc-low-", "inc-high-", "inc-agent-"];
 const DEPT = "CSOC";
+const isAgent = (inc) => String(inc?.id ?? "").startsWith("inc-agent-");
 
 const STATUS = {
   detected: ["New", "s-new"],
@@ -33,8 +34,9 @@ const WHO = {
   batman: ["Batman", "w-batman", null], sandbox: ["Daytona", "w-daytona", "daytona"], sim: ["Demo setup", "w-sim", null],
   edr: ["Endpoint (EDR)", "w-daytona", "logs"], idp: ["Identity", "w-daytona", "logs"],
   virustotal: ["VirusTotal*", "w-elevenlabs", "intel"], ipinfo: ["IPinfo*", "w-elevenlabs", "intel"], abuseipdb: ["AbuseIPDB*", "w-elevenlabs", "intel"],
-  gemini: ["Gemini", "w-gemini", "gemini"], rules: ["Rules", "w-batman", "gemini"], droid: ["Droid*", "w-droid", "droid"],
-  photon: ["Photon", "w-photon", "photon"], analyst: ["Analyst", "w-analyst", null],
+  gemini: ["Gemini", "w-gemini", "gemini"], rules: ["Rules", "w-batman", "gemini"], droid: ["Factory Droid", "w-droid", "droid"], scripted: ["Scripted plan*", "w-droid", "droid"],
+  aiagent: ["AI agent (simulated)", "w-sim", null], harness: ["Agent harness", "w-daytona", "logs"], sensor: ["Decoy sensor", "w-daytona", "logs"],
+  photon: ["Photon", "w-photon", "photon"], elevenlabs: ["ElevenLabs", "w-photon", "elevenlabs"], analyst: ["Analyst", "w-analyst", null],
 };
 const SYSTEMS = [
   { key: "daytona", name: "Daytona", role: "Robin's PC and the test copy" },
@@ -42,7 +44,8 @@ const SYSTEMS = [
   { key: "intel", name: "Threat intelligence", role: "VirusTotal, IPinfo, AbuseIPDB" },
   { key: "gemini", name: "Gemini", role: "AI investigator, checked in code" },
   { key: "droid", name: "Factory Droid", role: "Fix planner" },
-  { key: "photon", name: "Photon", role: "Alerts the on-call analyst" },
+  { key: "photon", name: "Photon", role: "Texts the on-call analyst" },
+  { key: "elevenlabs", name: "ElevenLabs", role: "Calls the analyst on urgent alerts" },
 ];
 
 let clearedBefore = 0;
@@ -76,11 +79,12 @@ const machineName = () => (state.info?.backend === "daytona" ? "Daytona" : "Sand
 function feedFrom(trace, inc) {
   if (!trace) return [];
   const out = [];
+  const pc = String(trace.id ?? inc?.id ?? "").startsWith("inc-agent-") ? "the build runner" : "Robin's PC";
   for (const s of trace.steps) {
     const d = s.data;
     const e = { ts: s.at, key: `${s.kind}-${s.at}` };
     switch (s.kind) {
-      case "machine.created": out.push({ ...e, who: "sandbox", text: "Connected to Robin's PC", query: `${machineName()}: create sandbox ${d.id}` }); break;
+      case "machine.created": out.push({ ...e, who: "sandbox", text: `Connected to ${pc}`, query: `${machineName()}: create sandbox ${d.id}` }); break;
       case "threat.started": out.push({ ...e, who: "sim", text: d.text ?? "Simulated threat started", query: "Harmless setup script written for this demo" }); break;
       case "alert": out.push({ ...e, who: "batman", text: `Ticket ${ticketNo(trace.id ?? inc.id)} opened and assigned to Batman` }); break;
       case "agent": out.push({ ...e, who: d.who, text: d.text, query: d.query }); break;
@@ -95,13 +99,13 @@ function feedFrom(trace, inc) {
           query: gem ? `POST generativelanguage.googleapis.com/v1beta/models/${d.trace?.model ?? "gemini"}:generateContent  (${d.trace?.sent?.length ?? 0} numbered evidence lines)` : "built-in severity rules" });
         break;
       }
-      case "plan": out.push({ ...e, who: "droid", text: `Fix plan ready: ${d.text ?? `${d.commands.length} steps`}`, sub: d.drastic ? "Major change: needs an analyst's approval" : "Minor change: Batman may apply it after testing", query: d.commands.join("  ;  ") }); break;
-      case "clone.created": out.push({ ...e, who: "sandbox", text: "Made a copy of Robin's PC to test the fix safely", query: `${machineName()}: copy sandbox → ${d.id}` }); break;
+      case "plan": out.push({ ...e, who: d.engine === "droid" ? "droid" : "scripted", text: `Fix plan ready: ${d.engine === "droid" && d.rationale ? d.rationale : d.text ?? `${d.commands.length} steps`}`, sub: [d.drastic ? "Major change: needs an analyst's approval" : "Minor change: Batman may apply it after testing", d.note].filter(Boolean).join(". "), query: d.commands.join("  ;  ") }); break;
+      case "clone.created": out.push({ ...e, who: "sandbox", text: `Made a copy of ${pc} to test the fix safely`, query: `${machineName()}: copy sandbox → ${d.id}` }); break;
       case "clone.checked": out.push({ ...e, who: "sandbox", text: d.passed ? `Tested the fix on the copy: passed all ${d.checks.length} checks` : `Tested the fix on the copy: failed ${d.checks.filter((c) => !c.passed).length} of ${d.checks.length} checks`, error: !d.passed, checks: d.checks }); break;
       case "decision": out.push({ ...e, who: "batman", text: d.action === "apply" ? "Low risk and the test passed, so Batman is fixing it on its own" : d.action === "await_approval" ? "Major change, so Batman needs an analyst to approve it" : "The fix failed testing on the copy, so Batman will not apply it", error: d.action === "reject" }); break;
       case "human": out.push({ ...e, who: "analyst", text: d.action === "approved" ? `${d.by} approved the fix` : `${d.by} declined the fix. Nothing was changed.` }); break;
-      case "applied": out.push({ ...e, who: "batman", text: "Applied the fix to Robin's real PC", query: (d.commands ?? []).join("  ;  ") }); break;
-      case "verified": out.push({ ...e, who: "sandbox", text: d.clean ? "Re-checked Robin's PC: everything passes" : "Re-checked Robin's PC: problems remain", error: !d.clean, checks: d.health }); break;
+      case "applied": out.push({ ...e, who: "batman", text: `Applied the fix to ${pc === "Robin's PC" ? "Robin's real PC" : "the real build runner"}`, query: (d.commands ?? []).join("  ;  ") }); break;
+      case "verified": out.push({ ...e, who: "sandbox", text: d.clean ? `Re-checked ${pc}: everything passes` : `Re-checked ${pc}: problems remain`, error: !d.clean, checks: d.health }); break;
       case "failed": out.push({ ...e, who: "batman", text: "Something went wrong running this alert", sub: `Stopped after "${d.after}": ${d.message}`, error: true }); break;
     }
   }
@@ -222,6 +226,7 @@ function renderBar() {
     <b>DEMO</b>
     <button class="low" data-tier="low" ${busy ? "disabled" : ""}>Low tier alert</button>
     <button class="high" data-tier="high" ${busy ? "disabled" : ""}>High tier alert</button>
+    <button class="agent" data-tier="agent" ${busy ? "disabled" : ""}>AI agent alert</button>
     <button class="ghost" id="clear" ${state.starting ? "disabled" : ""}>Clear demo tickets</button>
     <span class="state" aria-live="polite">${esc(status)}</span>
     <span class="chips">${i ? `
@@ -294,10 +299,11 @@ function systemsState(t) {
   const used = new Set(feed.map((f) => WHO[f.who]?.[2]).filter(Boolean));
   const last = WHO[feed.at(-1)?.who]?.[2];
   const running = t.incident.id === state.active;
-  const tag = { daytona: state.info?.backend === "daytona" ? "" : "local stand-in", intel: "placeholder", gemini: state.info?.investigator === "gemini" ? "" : "not configured", droid: "placeholder", photon: "demo mode" };
+  const tag = { daytona: state.info?.backend === "daytona" ? "" : "local stand-in", intel: "placeholder", gemini: state.info?.investigator === "gemini" ? "" : "not configured", droid: state.info?.planner === "droid" ? "" : "placeholder", photon: state.info?.photon === "live" ? "" : "demo mode", elevenlabs: state.info?.voice === "live" ? "" : "demo mode" };
   return `<ul class="systems">${SYSTEMS.map((s) => {
     const cls = running && last === s.key ? "busy" : used.has(s.key) ? "done" : "";
-    return `<li class="${cls}"><span class="dot"></span><span><b>${esc(s.name)}</b><br><span style="color:var(--muted)">${esc(s.role)}</span></span><span class="tag">${esc(tag[s.key] ?? "")}</span></li>`;
+    const role = s.key === "daytona" && isAgent(t.incident) ? "The build runner and the test copy" : s.role;
+    return `<li class="${cls}"><span class="dot"></span><span><b>${esc(s.name)}</b><br><span style="color:var(--muted)">${esc(role)}</span></span><span class="tag">${esc(tag[s.key] ?? "")}</span></li>`;
   }).join("")}</ul>`;
 }
 
@@ -313,7 +319,7 @@ function banner(t) {
       <button class="no" id="reject" ${state.acting ? "disabled" : ""}>Reject</button>
     </div>`;
   }
-  if (inc.status === "resolved") return `<div class="outcome ok">Resolved. The fix was applied and Robin's PC was re-checked: everything passes.</div>`;
+  if (inc.status === "resolved") return `<div class="outcome ok">Resolved. The fix was applied and ${isAgent(inc) ? "the build runner" : "Robin's PC"} was re-checked: everything passes.</div>`;
   if (inc.status === "fix_rejected") {
     const declined = t.trace?.steps.some((s) => s.kind === "human" && s.data.action === "rejected");
     return `<div class="outcome bad">Closed without changes: ${declined ? "the analyst declined the fix." : "the fix failed testing on the copy."}</div>`;
@@ -351,8 +357,8 @@ function renderTicket() {
           <dt>Status</dt><dd><span class="pill ${cls}">${esc(label)}</span></dd>
           <dt>Priority</dt><dd>${investigating ? `<span class="p-undeclared">Undeclared</span>` : `<span class="p-${inc.severity}">${PRIORITY[inc.severity]}</span> · ${pct(inc.confidence)} confident`}</dd>
           <dt>Acct/Dept</dt><dd><a>${DEPT}</a></dd>
-          <dt>User</dt><dd>robin.business@harvard.edu</dd>
-          <dt>Device</dt><dd>ROBIN-PC</dd>
+          <dt>User</dt><dd>${isAgent(inc) ? "agent-ci-7 (AI coding agent)" : "robin.business@harvard.edu"}</dd>
+          <dt>Device</dt><dd>${isAgent(inc) ? "BUILD-RUNNER-02" : "ROBIN-PC"}</dd>
           <dt>Assigned to</dt><dd>Batman (AI agent)</dd>
           ${fix?.approvedBy ? `<dt>Approved by</dt><dd>${esc(fix.approvedBy)}</dd>` : ""}
           <dt>Modified</dt><dd>${relative(inc.updatedAt ?? Date.now())}</dd>

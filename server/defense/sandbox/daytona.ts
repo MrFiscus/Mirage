@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { Daytona, type Sandbox as DaytonaBox } from "@daytonaio/sdk";
 import { buildSeed } from "./seed.js";
-import { VIRUS_PATH } from "./local.js";
+import { AGENT_PATH, LIVE_QUERY, respawnArgs, VIRUS_PATH } from "./local.js";
 import type { ExecResult, Sandbox } from "./types.js";
 
 /** Daytona calls that never answer must fail loudly, not leave the demo waiting forever. */
@@ -18,7 +18,7 @@ const daytona = () => (client ??= new Daytona({ apiKey: process.env.DAYTONA_API_
 
 /**
  * Real company machine / clone on Daytona. Native fork is not available on our account,
- * so clone() creates a second sandbox and replays the first one's files (and rogue process).
+ * so clone() creates a second sandbox and replays the first one's files (and the simulated processes still running).
  */
 export class DaytonaSandbox implements Sandbox {
   private constructor(readonly id: string, private box: DaytonaBox, private root: string) {}
@@ -57,6 +57,8 @@ export class DaytonaSandbox implements Sandbox {
     const files = await Promise.all(paths.map(async (p) => ({ source: await limit(this.box.fs.downloadFile(`${this.appDir}/${p}`), 30_000, `copy ${p}`), destination: `${copy.appDir}/${p}` })));
     await limit(copy.box.fs.uploadFiles(files), 60_000, "upload files to the copy");
     if ((await this.exec("test -f .run/rogue.pid")).code === 0) await copy.runScript(VIRUS_PATH, "respawn");
+    const agentProcs = respawnArgs((await this.exec(LIVE_QUERY)).stdout);
+    if (agentProcs.length) await copy.runScript(AGENT_PATH, `respawn ${agentProcs.join(" ")}`);
     return copy;
   }
 

@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "batman-preview",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["tsx", "server/index.ts"],
+      "env": { "PORT": "8790", "PHOTON_MODE": "mock", "VOICE_MODE": "mock", "PLANNER": "scripted" },
+      "port": 8790
+    }
+  ]
+}

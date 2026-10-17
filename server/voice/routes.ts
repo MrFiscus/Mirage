@@ -3,7 +3,9 @@ import express, { type NextFunction, type Request, type Response } from "express
 import type { CallSession } from "../../shared/types.js";
 import { emit } from "../core/events.js";
 import { getIncident, getSession, listIncidents, lookupCaller, saveSession } from "../core/store.js";
+import { approve, reject } from "../defense/approval.js";
 import { incidentViewFor } from "./disclosure.js";
+import { getOutboundCall } from "./outbound.js";
 import { MAX_CODE_ATTEMPTS, type VerificationService } from "./verification.js";
 
 const MAX_CODE_SENDS = 3;
@@ -45,7 +47,13 @@ function requireVoiceSecret(request: Request, response: Response, next: NextFunc
 // variables in the tool config, never left for the LLM to fill.
 function resolveSession(body: Record<string, unknown>): CallSession | { error: string; status: number } {
   const conversationId = typeof body.conversation_id === "string" ? body.conversation_id.trim() : "";
-  const phone = normalizePhone(body.caller_id);
+  // On a call Batman placed, caller_id can be the Photon line itself; the number Batman dialled is the one on record.
+  const outbound = conversationId ? getOutboundCall(conversationId) : undefined;
+  if (outbound) {
+    const session = getSession(conversationId);
+    if (session) return session;
+  }
+  const phone = outbound?.phone ?? normalizePhone(body.caller_id);
   if (!conversationId || !phone) return { error: "conversation_id and caller_id are required", status: 400 };
   const existing = getSession(conversationId);
   if (existing) {
@@ -128,9 +136,10 @@ export function voiceRouter(verification: VerificationService): express.Router {
   router.post("/voice/tools/incident-summary", express.json(), requireVoiceSecret, (request, response) => {
     const session = resolveSession(request.body ?? {});
     if ("error" in session) return response.status(session.status).json({ allowed: false, message: session.error });
+    const pinned = getOutboundCall(session.conversationId)?.incidentId;
     const requestedId = typeof request.body?.incident_id === "string" ? request.body.incident_id : "";
     const incidents = listIncidents();
-    const incident = (requestedId && getIncident(requestedId)) || incidents.find((item) => !["resolved", "fix_rejected"].includes(item.status)) || incidents[0];
+    const incident = pinned ? getIncident(pinned) : (requestedId && getIncident(requestedId)) || incidents.find((item) => !["resolved", "fix_rejected"].includes(item.status)) || incidents[0];
     if (!session.verified) {
       emit({ type: "disclosure", conversationId: session.conversationId, role: session.role, fields: [], allowed: false });
       return response.json({ allowed: false, message: "The caller is not verified. Share no incident details. Offer to text a verification code." });
@@ -143,6 +152,35 @@ export function voiceRouter(verification: VerificationService): express.Router {
     }
     emit({ type: "disclosure", conversationId: session.conversationId, role: session.role, fields: Object.keys(view), allowed: true });
     return response.json({ allowed: true, role: session.role, incident: view });
+  });
+
+  // Analyst approves or rejects the pending fix out loud. Only on a call Batman placed about that incident,
+  // only once verified, and the approver is the session's phone, never a tool argument.
+  router.post("/voice/tools/decide-fix", express.json(), requireVoiceSecret, async (request, response) => {
+    const session = resolveSession(request.body ?? {});
+    if ("error" in session) return response.status(session.status).json({ done: false, message: session.error });
+    const decision = request.body?.decision;
+    const incidentId = getOutboundCall(session.conversationId)?.incidentId;
+    const refuse = (message: string) => {
+      emit({ type: "audit", actor: "voice", action: "decision.refused", detail: `${session.conversationId}: ${message}`, ts: Date.now() });
+      return response.json({ done: false, message });
+    };
+    if (!session.verified) return refuse("The caller is not verified. Do not take a decision.");
+    if (session.role !== "analyst") return refuse("Only a security analyst can approve or reject a fix.");
+    if (!incidentId) return refuse("This call is not about a pending fix.");
+    if (decision !== "approve" && decision !== "reject") return refuse("Decision must be approve or reject. Ask the analyst again.");
+    try {
+      if (decision === "approve") await approve(incidentId, session.phone);
+      else await reject(incidentId, session.phone);
+    } catch (error) {
+      return refuse(`That could not be done: ${(error as Error).message}.`);
+    }
+    emit({ type: "audit", actor: "voice", action: `decision.${decision}`, detail: `${session.conversationId} on ${incidentId}`, ts: Date.now() });
+    const status = getIncident(incidentId)?.status;
+    const message = status === "resolved" ? "Done. The fix was applied and the machine re-checked clean."
+      : status === "fix_rejected" && decision === "reject" ? "Okay. Nothing was changed, and the ticket is closed as not fixed."
+      : `The ticket is now ${status?.replace(/_/g, " ") ?? "unknown"}. Details are in the console.`;
+    return response.json({ done: true, status, message });
   });
 
   // Post-call webhook: HMAC signed by ElevenLabs, so it needs the raw body.

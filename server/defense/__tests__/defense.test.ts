@@ -146,7 +146,7 @@ describe("scenarios", () => {
     const got = getIncident(inc.id)!;
     expect(got.status).toBe("fix_rejected");
     expect(got.proposedFix?.cloneCheck?.passed).toBe(false);
-    expect(smsLog.at(-1)?.body).toMatch(/REJECTED/);
+    expect(smsLog.at(-1)?.body).toMatch(/rejected/i);
     await expect(approve(inc.id, "+15550001002")).rejects.toThrow();
   }, 60_000);
   it("3: low risk fix that passes the clone auto-applies", async () => {
