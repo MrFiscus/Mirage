@@ -9,5 +9,9 @@ try { process.loadEnvFile(".env"); } catch { /* no .env: fine */ }
 
 // Explicit opt-in so tests and local dev never spend Daytona sandboxes by accident.
 export async function createCompanyMachine(): Promise<Sandbox> {
-  return process.env.SANDBOX_BACKEND === "daytona" ? DaytonaSandbox.create() : LocalSandbox.create();
+  if (process.env.SANDBOX_BACKEND === "daytona") return DaytonaSandbox.create();
+  if (process.platform === "win32") {
+    throw new Error("The local sandbox needs Linux tools and cannot run on Windows. Put SANDBOX_BACKEND=daytona and DAYTONA_API_KEY in .env (in the folder you run npm run dev from) and restart.");
+  }
+  return LocalSandbox.create();
 }

@@ -110,6 +110,16 @@ function describe(e) {
   }
 }
 
+// If the engine goes quiet mid-run, say so instead of spinning forever.
+let lastProgress = 0;
+setInterval(() => {
+  if (state.active && Date.now() - lastProgress > 60_000) {
+    state.error = "No progress from Batman for 60 seconds. Check the terminal running npm run dev for an error, then click Clear demo tickets and try again.";
+    state.active = null;
+    render();
+  }
+}, 5_000);
+
 function addEntry(entry) {
   entry.ts = entry.ts ?? Date.now();
   const ticket = state.tickets.get(state.active);
@@ -139,6 +149,7 @@ function connect() {
   const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/events`);
   ws.onmessage = (m) => {
     const e = JSON.parse(m.data);
+    if (state.active) lastProgress = Date.now();
     if (e.type === "incident.updated") return onIncident(e.incident);
     if (!state.active) return;
     if (e.type === "audit" && !IGNORED_ACTORS.has(e.actor)) {
@@ -165,6 +176,7 @@ async function start(tier) {
     const body = await r.json();
     if (!r.ok) throw new Error(body.error || r.statusText);
     state.active = body.incidentId;
+    lastProgress = Date.now();
     state.pending = [];
     state.view = { name: "queue" };
   } catch (err) { state.error = String(err.message || err); }

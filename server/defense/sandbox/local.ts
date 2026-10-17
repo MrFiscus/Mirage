@@ -42,7 +42,11 @@ export class LocalSandbox implements Sandbox {
       const timer = setTimeout(() => c.kill("SIGKILL"), timeoutMs);
       c.stdout.on("data", (d) => (stdout += d));
       c.stderr.on("data", (d) => (stderr += d));
-      c.on("close", (code) => { clearTimeout(timer); res({ code: code ?? -1, stdout, stderr }); });
+      let done = false;
+      const finish = (r: ExecResult) => { if (!done) { done = true; clearTimeout(timer); res(r); } };
+      // Without this, a missing shell (e.g. no `sh` on Windows) would leave the promise pending forever.
+      c.on("error", (err) => finish({ code: -1, stdout, stderr: stderr + String(err) }));
+      c.on("close", (code) => finish({ code: code ?? -1, stdout, stderr }));
     });
   }
 
