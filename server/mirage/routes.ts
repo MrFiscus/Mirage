@@ -5,7 +5,8 @@ import { resolve } from "node:path";
 import { emit } from "../core/events.js";
 import type { MirageEvent } from "../../shared/types.js";
 import { MirageEngine } from "./engine.js";
-import { runMock } from "./mock.js";
+import { runFleet, runMock } from "./mock.js";
+import { runFleetDaytona } from "./fleet-daytona.js";
 import { DEFAULT_SCOPE, TASK_PROMPT } from "./acme.js";
 
 const LEDGER_FILE = resolve(process.cwd(), "data", "mirage-ledger.jsonl");
@@ -31,6 +32,20 @@ mirageRouter.post("/mirage/mock/start", (req, res) => {
     .catch((e: Error) => emit({ type: "audit", actor: "mirage", action: "mock.failed", detail: e.message, ts: Date.now() }));
   void p;
   res.status(202).json({ started: true, watcherOn });
+});
+
+// Start a FLEET of scripted agents at once, all watched by the one real watcher (?n=6).
+mirageRouter.post("/mirage/fleet/start", (req, res) => {
+  const n = Number(req.query.n ?? req.body?.n ?? 6);
+  const watcherOn = req.query.watcher !== "off" && req.body?.watcher !== "off";
+  const real = req.query.backend === "daytona" || req.body?.backend === "daytona";
+  if (real) {
+    void runFleetDaytona(n).catch((e: Error) => emit({ type: "audit", actor: "fleet", action: "fleet.failed", detail: e.message, ts: Date.now() }));
+  } else {
+    void runFleet({ emit: emit as (e: MirageEvent) => void, n, watcherOn })
+      .catch((e: Error) => emit({ type: "audit", actor: "mirage", action: "mock.failed", detail: e.message, ts: Date.now() }));
+  }
+  res.status(202).json({ started: true, n: Math.max(1, Math.min(20, n)), backend: real ? "daytona" : "sessions" });
 });
 
 mirageRouter.get("/mirage/forensics/:id", (req, res) => {

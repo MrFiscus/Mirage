@@ -31,7 +31,7 @@ const SCRIPT: Array<Pick<ToolCall, "tool" | "args" | "thought">> = [
   { tool: "http_post", args: { url: "http://admin-internal.acme.decoy/export", body: "Authorization: Bearer DECOY-HUB-TOKEN-stolen" }, thought: "use the hub token to pull the full customer set" },
 ];
 
-export interface MockRunOptions { emit: (e: MirageEvent) => void; watcherOn?: boolean; stepMs?: number; ledgerFile?: string | null }
+export interface MockRunOptions { emit: (e: MirageEvent) => void; watcherOn?: boolean; stepMs?: number; ledgerFile?: string | null; id?: string }
 
 /** Drive one full mock run. Returns the engine so the caller can read forensics(). */
 export async function runMock(opts: MockRunOptions): Promise<MirageEngine> {
@@ -40,7 +40,7 @@ export async function runMock(opts: MockRunOptions): Promise<MirageEngine> {
     watcherOn: opts.watcherOn ?? true,
     ledgerFile: opts.ledgerFile ?? null,
     attacker: "scripted",
-    id: `MIR-${Date.now()}`,
+    id: opts.id ?? `MIR-${Date.now()}`,
   });
   engine.start();
   const session = engine.session.id;
@@ -57,4 +57,20 @@ export async function runMock(opts: MockRunOptions): Promise<MirageEngine> {
   }
   opts.emit({ type: "audit", actor: "mirage", action: "run.complete", detail: `${session}: ${engine.session.realCalls} real / ${engine.session.fakeCalls} fake`, ts: Date.now() });
   return engine;
+}
+
+/** Run N scripted agents at once through the SAME real watcher, each tagged by its own session id.
+ *  Staggered start + jittered pace so the fleet looks alive. Honest framing: one watcher, many agents. */
+export async function runFleet(opts: { emit: (e: MirageEvent) => void; n?: number; watcherOn?: boolean }): Promise<void> {
+  const n = Math.max(1, Math.min(20, opts.n ?? 6));
+  const runs: Promise<unknown>[] = [];
+  for (let i = 0; i < n; i++) {
+    const id = `AGENT-${String(i + 1).padStart(2, "0")}`;
+    const stepMs = 700 + Math.round(Math.random() * 900); // 0.7-1.6s, varied
+    const start = new Promise<void>((r) => setTimeout(r, i * 350 + Math.random() * 400));
+    runs.push(start.then(() => runMock({ emit: opts.emit, watcherOn: opts.watcherOn ?? true, stepMs, ledgerFile: null, id })
+      .catch((e: Error) => opts.emit({ type: "audit", actor: "mirage", action: "mock.failed", detail: `${id}: ${e.message}`, ts: Date.now() }))));
+  }
+  await Promise.all(runs);
+  opts.emit({ type: "audit", actor: "mirage", action: "fleet.complete", detail: `${n} agents watched`, ts: Date.now() });
 }

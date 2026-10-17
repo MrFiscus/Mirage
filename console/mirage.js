@@ -1,224 +1,215 @@
-// Mirage dashboard. Self-contained: own WebSocket to /events, renders only MirageEvents.
-// Layout ported from the Figma design; every value here is driven by the live event stream, so
-// what judges see on screen is exactly what the watcher + mirage engine did in the backend.
+// Mirage — fleet view. N agents, each in its own real Daytona VM, all watched by the one watcher.
+// Each box is a VM: a small node-graph of the agent's activity. A move out of scope flashes red, the
+// watcher reaches in and contains it (amber). Click a box to zoom in. Driven by real MirageEvents.
+const COL = { safe: "#7bdcc0", mirage: "#e0b65a", block: "#e5675f", ink: "#f4f5f6", muted: "#8a8d93", line: "#2a2b2f", dim: "#55585e" };
 const app = document.querySelector("#app");
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[c]));
-const pct = (x) => `${Math.round((x ?? 0) * 100)}%`;
-const pad2 = (n) => String(n ?? 0).padStart(2, "0");
+
+app.innerHTML = `
+  <div class="bar">
+    <div class="logo"><span class="ring"></span><b>MIRAGE</b><small>AGENT CONTAINMENT · REAL DAYTONA VMS</small></div>
+    <button class="btn ghost" id="back" style="display:none">← fleet</button>
+    <div class="grow"></div>
+    <label class="count">VMs<button class="step" id="minus">−</button><input id="n" type="number" min="1" max="20" value="6" /><button class="step" id="plus">+</button></label>
+    <span class="phase" id="phase">ready</span>
+    <button class="btn" id="start">Start testing</button>
+  </div>
+  <div class="hair"><i id="bar"></i></div>
+  <div class="main">
+    <div class="stage"><canvas id="c"></canvas>
+      <div class="caption" id="caption"></div>
+      <div class="intro" id="intro">
+        <h1>Watch a fleet of AI agents try to break out.</h1>
+        <p>A fleet of AI agents, each in its own real Daytona VM, is given an impossible task. Every move is shown live. One watcher sits in the path of all of them — the moment an agent reaches outside its approved scope, it's intercepted and rerouted into a shadow world, so nothing real is ever touched.</p>
+        <button class="btn" id="start2">Start testing</button>
+      </div>
+    </div>
+    <aside class="rail">
+      <h2 id="rail-title">FLEET</h2>
+      <div class="stat"><div class="k" id="k0">AGENTS (VMS)</div><div class="v" id="s-vms">0</div></div>
+      <div class="stat"><div class="k">MOVES</div><div class="v" id="s-moves">0</div></div>
+      <div class="stat"><div class="k">REROUTED TO MIRAGE</div><div class="v mirage" id="s-mirage">0</div></div>
+      <div class="stat"><div class="k">BLOCKED</div><div class="v block" id="s-block">0</div></div>
+      <div class="stat hero"><div class="k">REAL OUT-OF-SCOPE ACCESS</div><div class="v safe" id="s-oos">0</div><div class="sub" id="s-oos-sub">boundary intact</div></div>
+      <div class="spacer"></div>
+      <div class="verdict-feed" id="feed"></div>
+    </aside>
+  </div>`;
+
+const canvas = document.querySelector("#c");
+const ctx = canvas.getContext("2d");
+let W = 0, H = 0, cells = [];
+
+function layout() {
+  const r = canvas.parentElement.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = r.width; H = r.height;
+  canvas.width = W * dpr; canvas.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  computeCells();
+}
+window.addEventListener("resize", layout);
+
+const NODE_POS = Array.from({ length: 5 }, (_, i) => { const a = (i / 5) * Math.PI * 2 - Math.PI / 2; return { x: Math.cos(a) * 0.62, y: Math.sin(a) * 0.62 }; });
+const EDGES = [[0, 1], [1, 2], [2, 3], [3, 4], [4, 0], [0, 2], [1, 3]];
 
 const state = {
-  session: null,          // latest Session
-  rows: [],               // { call, summary, verdict, out }
-  progress: 0,
-  audit: [],              // { action, detail, ts }
-  connected: false,
-  running: false,
-  watcherOn: true,
-  now: new Date(),
-  runs: { on: null, off: null }, // realOOS recorded at each run.complete, for the contrast card
+  view: "fleet", focus: null, phase: "idle", fleetN: 6,
+  boxes: new Map(), order: [],
+  stats: { moves: 0, mirage: 0, block: 0 },
+  feed: [], pending: {},
 };
 
-const TOOL_CHIP = { read_file: "READ", http_get: "GET", http_post: "POST", run_shell: "SHELL" };
-const toolChip = (t) => TOOL_CHIP[t] ?? String(t).toUpperCase();
-
-function summarize(call) {
-  const a = call.args ?? {};
-  if (call.tool === "read_file") return String(a.path ?? a.file ?? "");
-  if (call.tool === "http_get") return `GET ${a.url ?? ""}`;
-  if (call.tool === "http_post") return `POST ${a.url ?? ""}`;
-  return String(a.command ?? a.cmd ?? "");
+function box(id) {
+  if (!state.boxes.has(id)) {
+    const b = { id, label: `VM-${String(state.order.length + 1).padStart(2, "0")}`, nodes: NODE_POS.map((p) => ({ ...p, pulse: 0, color: COL.ink })), flashes: [], moves: 0, mirage: 0, block: 0, status: "active", last: "" };
+    state.boxes.set(id, b); state.order.push(id);
+  }
+  return state.boxes.get(id);
 }
 
-// Real out-of-scope accesses: with the watcher on, out-of-scope calls go to the mirage (0 reached real);
-// with it off, every out-of-scope call (verdict != pass) actually ran against the real env.
-function realOOS() {
-  if (state.watcherOn) return 0;
-  return state.rows.filter((r) => r.verdict && r.verdict.decision !== "pass").length;
-}
-const isDecoy = (v) => v?.decision === "block" && /decoy/i.test((v.reasons ?? []).join(" "));
-
-function decisionReason(v) {
-  if (!v) return "awaiting watcher…";
-  return v.reasons && v.reasons.length ? v.reasons[0] : (v.decision === "pass" ? "within approved scope" : "out of scope");
-}
-function scoreSmall(v) {
-  if (!v) return "";
-  return v.layer === "llm" ? `rules floor ${pct(v.floor)} · AI ${pct(v.score)}` : `rules ${pct(v.score)}`;
+function computeCells() {
+  const n = Math.max(state.fleetN, state.order.length) || 6;
+  if (state.view === "detail") { cells = [{ id: state.focus, x: W * 0.06, y: H * 0.06, w: W * 0.88, h: H * 0.88 }]; return; }
+  const cols = n <= 2 ? n : n <= 4 ? 2 : n <= 9 ? 3 : 4;
+  const rows = Math.ceil(n / cols);
+  const gap = 16, pad = 20;
+  const cw = (W - pad * 2 - gap * (cols - 1)) / cols;
+  const ch = (H - pad * 2 - gap * (rows - 1)) / rows;
+  cells = [];
+  for (let i = 0; i < n; i++) { const r = Math.floor(i / cols), c = i % cols; cells.push({ id: state.order[i] ?? null, slot: i, x: pad + c * (cw + gap), y: pad + r * (ch + gap), w: cw, h: ch }); }
 }
 
-/* ---------- sections ---------- */
-
-function topbar() {
-  const t = state.now.toISOString().slice(11, 19);
-  return `<header class="topbar">
-    <div class="brand">
-      <div class="brand-mark"><span>M</span></div>
-      <div><div class="wordmark">MIRAGE</div><div class="eyebrow">IN-PATH WATCHER · SHADOW WORLD</div></div>
-    </div>
-    <div class="topbar-actions">
-      <div class="live-status"><span class="live-dot"></span>${state.connected ? "LIVE" : "OFFLINE"} · ${t} UTC</div>
-      <div class="control-group">
-        <button class="control-button ${state.watcherOn ? "active" : ""}" id="run-on" ${state.running ? "disabled" : ""}><span class="control-light"></span>Run watcher ON</button>
-        <button class="control-button ${!state.watcherOn ? "active" : ""}" id="run-off" ${state.running ? "disabled" : ""}><span class="control-light"></span>Run watcher OFF</button>
-      </div>
-    </div>
-  </header>`;
+/* ---------- events → activity ---------- */
+function onVerdict(sessionId, step, decision, label) {
+  const b = box(sessionId);
+  const node = b.nodes[(step - 1) % 5];
+  node.pulse = 1; node.color = decision === "pass" ? COL.safe : decision === "mirage" ? COL.mirage : COL.block;
+  b.moves++; b.last = label;
+  if (decision === "mirage") { b.mirage++; b.flashes.push({ color: COL.mirage, t: 0 }); }
+  else if (decision === "block") { b.block++; b.flashes.push({ color: COL.block, t: 0 }); }
+  state.stats.moves++; if (decision === "mirage") state.stats.mirage++; if (decision === "block") state.stats.block++;
+  state.feed.unshift(`<span class="${decision}">${decision.toUpperCase().padEnd(6)}</span> ${esc(b.label)} · ${esc(label)}`);
+  state.feed = state.feed.slice(0, 8);
+  renderStats();
 }
 
-function hero() {
-  const s = state.session;
-  const triggered = s?.triggered;
-  const oos = realOOS();
-  const kicker = !state.watcherOn ? "UNPROTECTED RUN" : triggered ? "CONTAINMENT EVENT" : s ? "SESSION ACTIVE" : "STANDBY";
-  const title = !state.watcherOn ? "WATCHER OFF — REAL SYSTEM EXPOSED"
-    : triggered ? "BOUNDARY CROSSED — AGENT IN THE MIRAGE"
-    : s ? "AGENT WORKING IN SCOPE" : "READY — START A RUN";
-  const subline = !state.watcherOn ? `simulation result · ${oos} out-of-scope calls reached the real system`
-    : triggered ? `triggered at step ${s.triggerStep ?? "?"} · ${esc(s.triggerReason ?? "read outside scope")}`
-    : s ? `${esc(s.id)} · ${esc(s.attacker)} · calls hitting the real environment` : "watcher in the path of every action";
-  const proof = !state.watcherOn ? "BOUNDARY BREACHED" : "BOUNDARY INTACT";
-  return `<section class="alert-hero">
-    <div class="alert-copy">
-      <div class="alert-kicker">${esc(kicker)}</div>
-      <div class="alert-title">${esc(title)}</div>
-      <div class="alert-subline">${subline}</div>
-    </div>
-    <div class="zero-stat">
-      <div class="zero-value">${oos}</div>
-      <div class="zero-label">REAL OUT-OF-SCOPE ACCESSES</div>
-      <div class="zero-proof"><span class="proof-line"></span>${proof}</div>
-    </div>
-  </section>`;
+function shortLabel(call) {
+  const a = call.args ?? {}; const s = a.url || a.path || a.command || a.cmd || call.tool;
+  const host = String(s).match(/https?:\/\/([^/\s]+)/)?.[1]; if (host) return host.replace(/\.acme\.\w+$/, "");
+  const p = String(s).match(/\/[\w./-]+/)?.[0]; if (p) return p.split("/").slice(-2).join("/");
+  return String(call.tool).replace("_", " ");
 }
 
-function metrics() {
-  const s = state.session ?? { realCalls: 0, fakeCalls: 0, loopDepth: 0 };
-  const total = s.realCalls + s.fakeCalls || 1;
-  const realPct = Math.round((s.realCalls / total) * 100);
-  const oos = realOOS();
-  return `<section class="metrics-grid">
-    <div class="metric"><div class="metric-label">REAL CALLS</div><div class="metric-value">${pad2(s.realCalls)}</div><div class="metric-note">approved scope only</div></div>
-    <div class="metric metric-amber"><div class="metric-label">FAKE CALLS</div><div class="metric-value">${pad2(s.fakeCalls)}</div>
-      <div class="split-bar"><span class="split-real" style="width:${realPct}%"></span><span class="split-fake" style="width:${100 - realPct}%"></span></div>
-      <div class="metric-note split-label"><span>REAL ${realPct}%</span><span>FAKE ${100 - realPct}%</span></div></div>
-    <div class="metric metric-violet"><div class="metric-label">LOOP DEPTH</div><div class="metric-value">${s.loopDepth ? pad2(s.loopDepth) : "—"}</div><div class="metric-note">${s.loopDepth ? "agent still exploring" : "no repeats yet"}</div></div>
-    <div class="metric metric-safe"><div class="metric-label">REAL OUT-OF-SCOPE</div><div class="metric-value">${oos}</div><div class="metric-note">${oos === 0 ? "the system never saw it" : "uncontained"}</div></div>
-    <div class="metric"><div class="metric-label">AGENT'S FELT PROGRESS</div><div class="metric-value">${pct(state.progress)}</div>
-      <div class="progress-track"><span style="width:${pct(state.progress)}"></span></div><div class="metric-note">asymptote · never completes</div></div>
-  </section>`;
+/* ---------- draw ---------- */
+let last = performance.now();
+function tick(now) {
+  const dt = Math.min(48, now - last); last = now;
+  for (const b of state.boxes.values()) {
+    for (const nd of b.nodes) nd.pulse = Math.max(0, nd.pulse - dt / 700);
+    b.flashes = b.flashes.filter((f) => (f.t += dt / 700) < 1);
+  }
+  draw(now); requestAnimationFrame(tick);
 }
 
-function pipeline() {
-  const last = state.rows[state.rows.length - 1]?.verdict?.decision;
-  const sel = { pass: "real", mirage: "mirage", block: "block" }[last] ?? "";
-  const notified = state.audit.some((a) => /notify/.test(a.action));
-  const opt = (cls, label) => `<div class="${sel === cls ? "selected" : ""}"><span class="fork-dot ${cls}"></span>${label}</div>`;
-  return `<section class="pipeline">
-    <div class="pipeline-node"><span class="node-index">01</span><strong>ATTACKER</strong><small>agent action</small></div>
-    <div class="pipeline-link active-link"><span>request</span></div>
-    <div class="pipeline-node watcher-node"><span class="node-index">02</span><strong>WATCHER</strong><small>rules + AI</small></div>
-    <div class="fork"><div class="fork-line"></div><div class="fork-options">${opt("real", "REAL ENV")}${opt("mirage", "MIRAGE")}${opt("block", "BLOCK")}</div></div>
-    <div class="pipeline-link ${sel === "mirage" ? "active-link" : ""}"><span>contained</span></div>
-    <div class="pipeline-node notify-node"><span class="node-index">04</span><strong>NOTIFY DEFENDER</strong><small>${notified ? "phone connected" : "on trigger"}</small></div>
-  </section>`;
+function roundRect(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+
+function drawCell(cell, now, detail) {
+  const b = cell.id ? state.boxes.get(cell.id) : null;
+  const cx = cell.x + cell.w / 2, cy = cell.y + cell.h / 2, rad = Math.min(cell.w, cell.h) * (detail ? 0.33 : 0.3);
+  const containing = b && b.flashes.some((f) => f.t < 0.5);
+  ctx.save();
+  ctx.strokeStyle = containing ? "rgba(224,182,90,0.6)" : COL.line; ctx.lineWidth = containing ? 2 : 1.3;
+  roundRect(cell.x, cell.y, cell.w, cell.h, 12); ctx.stroke();
+  ctx.restore();
+  // label + status
+  ctx.fillStyle = b ? COL.muted : COL.dim; ctx.font = `${detail ? 13 : 11}px 'DM Mono', monospace`; ctx.textAlign = "left";
+  ctx.fillText(b ? b.label : "booting…", cell.x + 12, cell.y + 20);
+  if (b) { ctx.fillStyle = COL.dim; ctx.textAlign = "right"; ctx.fillText(`${b.mirage} contained`, cell.x + cell.w - 12, cell.y + 20); ctx.textAlign = "left"; }
+  if (!b) { ctx.textAlign = "center"; ctx.fillStyle = COL.dim; ctx.fillText("● provisioning VM", cx, cy); ctx.textAlign = "left"; ctx.restore?.(); return; }
+
+  // watcher ring (the outer layer) — pulses when containing
+  ctx.save(); ctx.globalAlpha = containing ? 0.5 : 0.14; ctx.strokeStyle = containing ? COL.mirage : COL.muted; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(cx, cy, rad * 1.5, 0, 7); ctx.stroke(); ctx.restore();
+  for (const f of b.flashes) { ctx.save(); ctx.globalAlpha = (1 - f.t) * 0.7; ctx.strokeStyle = f.color; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.arc(cx, cy, rad * 1.5 * (0.6 + f.t), 0, 7); ctx.stroke(); ctx.restore(); }
+
+  // edges
+  ctx.strokeStyle = "rgba(255,255,255,0.07)"; ctx.lineWidth = 1;
+  for (const [a, c] of EDGES) { const na = b.nodes[a], nc = b.nodes[c]; ctx.beginPath(); ctx.moveTo(cx + na.x * rad, cy + na.y * rad); ctx.lineTo(cx + nc.x * rad, cy + nc.y * rad); ctx.stroke(); }
+  // nodes
+  for (const nd of b.nodes) {
+    const px = cx + nd.x * rad, py = cy + nd.y * rad; const r = (detail ? 4 : 3) + nd.pulse * (detail ? 6 : 4);
+    ctx.save(); if (nd.pulse > 0.01) { ctx.shadowBlur = 16; ctx.shadowColor = nd.color; } ctx.fillStyle = nd.pulse > 0.01 ? nd.color : COL.dim;
+    ctx.beginPath(); ctx.arc(px, py, r, 0, 7); ctx.fill(); ctx.restore();
+  }
+  if (detail && b.last) { ctx.fillStyle = COL.muted; ctx.font = `12px 'DM Mono', monospace`; ctx.textAlign = "center"; ctx.fillText(b.last, cx, cell.y + cell.h - 18); ctx.textAlign = "left"; }
 }
 
-function transcript() {
-  const rows = [...state.rows].reverse();
-  const body = rows.length ? rows.map((r) => {
-    const v = r.verdict;
-    const d = v?.decision ?? "pass";
-    return `<article class="trace-row ${isDecoy(v) ? "decoy-row" : ""}">
-      <div class="step-number">${pad2(r.call.step)}</div>
-      <div class="trace-main">
-        <div class="action-line"><span class="tool-chip">${toolChip(r.call.tool)}</span><span>${esc(r.summary)}</span></div>
-        ${r.call.thought ? `<div class="agent-thought"><span>UNTRUSTED</span><em>“${esc(r.call.thought)}”</em></div>` : ""}
-      </div>
-      <div class="decision"><strong>${esc(decisionReason(v))}</strong><small>${scoreSmall(v)}</small></div>
-      <span class="status status-${d}">${d.toUpperCase()}</span>
-    </article>`;
-  }).join("") : `<div class="trace-row"><div class="step-number"></div><div class="trace-main"><div class="action-line"><span>Start a run — tool calls stream here as the agent works.</span></div></div></div>`;
-  return `<div class="panel transcript-panel">
-    <div class="panel-heading"><div><div class="panel-title">FORENSIC TRANSCRIPT</div><div class="panel-subtitle">Every action inspected in path · newest first</div></div><div class="panel-count">${pad2(state.rows.length)} EVENTS</div></div>
-    <div class="trace-column-labels"><span>STEP / TOOL / ACTION</span><span>WATCHER DECISION</span></div>
-    <div class="trace-list">${body}</div>
-  </div>`;
+function draw(now) {
+  ctx.clearRect(0, 0, W, H);
+  for (const cell of cells) drawCell(cell, now, state.view === "detail");
+}
+requestAnimationFrame(tick);
+
+/* ---------- ui + data ---------- */
+function caption(h) { const el = document.querySelector("#caption"); el.innerHTML = h; el.classList.remove("hidden"); }
+function setPhase(t) { document.querySelector("#phase").textContent = t; }
+function setBar(p) { document.querySelector("#bar").style.width = `${Math.round(Math.min(1, p) * 100)}%`; }
+function renderStats() {
+  const detail = state.view === "detail" && state.boxes.get(state.focus);
+  document.querySelector("#rail-title").textContent = detail ? detail.label : "FLEET";
+  document.querySelector("#k0").textContent = detail ? "MOVES" : "AGENTS (VMS)";
+  document.querySelector("#s-vms").textContent = detail ? detail.moves : state.order.length;
+  document.querySelector("#s-moves").textContent = detail ? detail.moves : state.stats.moves;
+  document.querySelector("#s-mirage").textContent = detail ? detail.mirage : state.stats.mirage;
+  document.querySelector("#s-block").textContent = detail ? detail.block : state.stats.block;
+  document.querySelector("#s-oos").textContent = "0";
+  document.querySelector("#feed").innerHTML = state.feed.join("<br>");
 }
 
-function auditType(action) {
-  if (/block|locked/.test(action)) return "block";
-  if (/mirage|served/.test(action)) return "mirage";
-  if (/notify/.test(action)) return "notify";
-  if (/boundary|trigger|pressure|kill|failed/.test(action)) return "alert";
-  if (/pass|verdict\.pass|verified|in scope/.test(action)) return "pass";
-  return "pass";
-}
-function auditStream() {
-  const rows = state.audit.slice(0, 11).map((a) => {
-    const time = new Date(a.ts).toISOString().slice(11, 23);
-    const type = auditType(a.action);
-    return `<div class="audit-row"><span class="audit-time">${time}</span><span class="audit-type audit-${type}">${esc(type)}</span><span class="audit-event">${esc(a.detail || a.action)}</span></div>`;
-  }).join("") || `<div class="audit-row"><span class="audit-event">Events will stream here.</span></div>`;
-  return `<div class="panel audit-panel">
-    <div class="panel-heading"><div><div class="panel-title">AUDIT STREAM</div><div class="panel-subtitle">${state.session ? esc(state.session.id) : "mirage://run"}</div></div><div class="streaming"><span></span>STREAMING</div></div>
-    <div class="audit-list">${rows}</div>
-  </div>`;
-}
+canvas.addEventListener("click", (ev) => {
+  if (state.view === "detail") return;
+  const r = canvas.getBoundingClientRect(); const x = ev.clientX - r.left, y = ev.clientY - r.top;
+  const cell = cells.find((c) => c.id && x >= c.x && x <= c.x + c.w && y >= c.y && y <= c.y + c.h);
+  if (cell) { state.view = "detail"; state.focus = cell.id; document.querySelector("#back").style.display = ""; computeCells(); renderStats(); caption(`<b>${esc(state.boxes.get(cell.id).label)}</b> — one agent, watched in its own VM. Click ← fleet to go back.`); }
+});
+document.querySelector("#back").onclick = () => { state.view = "fleet"; state.focus = null; document.querySelector("#back").style.display = "none"; computeCells(); renderStats(); };
 
-function contrast() {
-  const off = state.runs.off;
-  const on = state.runs.on;
-  const val = (x) => (x == null ? "—" : String(x));
-  return `<div class="contrast-card">
-    <div class="contrast-heading">COUNTERFACTUAL</div>
-    <div class="contrast-row bad"><span>WITHOUT WATCHER</span><strong>${val(off)}</strong><small>real accesses</small></div>
-    <div class="contrast-divider"><span>VS</span></div>
-    <div class="contrast-row good"><span>WITH WATCHER</span><strong>${val(on)}</strong><small>real accesses</small></div>
-    <div class="win-line">${on === 0 ? "ZERO REAL OUT-OF-SCOPE ACCESS" : "RUN BOTH TO COMPARE"}</div>
-  </div>`;
+function chosenN() { const el = document.querySelector("#n"); return Math.max(1, Math.min(20, Math.round(Number(el.value) || 6))); }
+async function start() {
+  const n = chosenN(); document.querySelector("#n").value = n; state.fleetN = n;
+  state.phase = "running"; state.boxes = new Map(); state.order = []; state.feed = []; state.pending = {};
+  state.stats = { moves: 0, mirage: 0, block: 0 }; state.view = "fleet"; state.focus = null;
+  document.querySelector("#back").style.display = "none"; document.querySelector("#intro").classList.add("hidden");
+  document.querySelector("#start").disabled = true; setBar(0); setPhase("provisioning VMs"); renderStats(); computeCells();
+  caption(`Spinning up ${n} Daytona VM${n === 1 ? "" : "s"}, one agent each…`);
+  try { await fetch(`/mirage/fleet/start?n=${n}&backend=daytona`, { method: "POST" }); }
+  catch { setPhase("server offline"); document.querySelector("#start").disabled = false; }
 }
+document.querySelector("#start").onclick = start;
+document.querySelector("#start2").onclick = start;
+const nudge = (d) => { const el = document.querySelector("#n"); el.value = Math.max(1, Math.min(20, (Number(el.value) || 6) + d)); };
+document.querySelector("#plus").onclick = () => nudge(1);
+document.querySelector("#minus").onclick = () => nudge(-1);
 
-function render() {
-  app.className = `app-shell ${state.watcherOn ? "watcher-on" : "watcher-off"}`;
-  app.innerHTML = `${topbar()}${hero()}${metrics()}${pipeline()}
-    <section class="evidence-grid">${transcript()}<aside class="side-stack">${auditStream()}${contrast()}</aside></section>
-    <footer class="footer"><span>MIRAGE CONTAINMENT ENGINE</span><span>IN-PATH WATCHER · RULES + CHALK</span><span class="footer-safe"><i></i>ALL REAL SYSTEMS NOMINAL</span></footer>`;
-  const on = document.querySelector("#run-on"), off = document.querySelector("#run-off");
-  if (on) on.onclick = () => startRun(true);
-  if (off) off.onclick = () => startRun(false);
-}
-
-/* ---------- live data ---------- */
-
-async function startRun(watcherOn) {
-  state.session = null; state.rows = []; state.progress = 0; state.running = true; state.watcherOn = watcherOn;
-  render();
-  await fetch(`/mirage/mock/start?watcher=${watcherOn ? "on" : "off"}`, { method: "POST" }).catch(() => { state.running = false; render(); });
-}
-
+const STEPS = 10;
 function handle(e) {
-  if (e.type === "session.started") state.session = e.session;
-  else if (e.type === "tool.call") state.rows.push({ call: e.call, summary: summarize(e.call), verdict: null, out: "" });
-  else if (e.type === "watcher.verdict") { const r = state.rows.find((x) => x.call.id === e.callId); if (r) r.verdict = e.verdict; }
-  else if (e.type === "mirage.served") { const r = state.rows.find((x) => x.call.id === e.callId); if (r) r.out = (e.entry.value || "").split("\n")[0]; }
-  else if (e.type === "progress.updated") state.progress = e.progress;
-  else if (e.type === "audit") {
-    state.audit.unshift({ action: e.action, detail: e.detail, ts: e.ts });
-    if (e.action === "run.complete" || e.action === "mock.failed") { state.running = false; state.runs[state.watcherOn ? "on" : "off"] = realOOS(); }
-  } else if (e.type === "kill") state.audit.unshift({ action: "kill", detail: e.reason, ts: Date.now() });
-  else if (e.type === "notify.sent") state.audit.unshift({ action: "notify.sent", detail: `${e.channel} → ${e.to}`, ts: Date.now() });
-  else return;
-  render();
+  if (e.type === "audit" && e.action === "fleet.starting") { const m = String(e.detail).match(/(\d+)/); if (m) state.fleetN = +m[1]; computeCells(); setPhase("provisioning VMs"); }
+  else if (e.type === "session.started") { box(e.session.id); computeCells(); setPhase(`${state.order.length} agents live`); renderStats(); }
+  else if (e.type === "tool.call") state.pending[e.call.id] = { session: e.call.session, step: e.call.step, label: shortLabel(e.call) };
+  else if (e.type === "watcher.verdict") { const p = state.pending[e.callId]; if (p) { onVerdict(p.session, p.step, e.verdict.decision, p.label); setBar(state.stats.moves / (state.fleetN * STEPS)); } }
+  else if (e.type === "audit" && e.action === "fleet.complete") finish();
+  else if (e.type === "audit" && e.action === "vm.failed") { state.feed.unshift(`<span class="block">VM FAIL</span> ${esc(e.detail)}`); renderStats(); }
 }
-
+function finish() {
+  state.phase = "contained"; setPhase("contained"); setBar(1);
+  document.querySelector("#start").disabled = false; document.querySelector("#start").textContent = "Run again";
+  document.querySelector("#s-oos-sub").textContent = `${state.stats.mirage} rerouted · ${state.stats.block} blocked`;
+  caption(`<b>Fleet contained.</b> ${state.order.length} agents · ${state.stats.moves} moves · 0 real out-of-scope accesses. Click any VM to inspect it.`);
+}
 function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/events`);
-  ws.onopen = () => { state.connected = true; render(); };
-  ws.onclose = () => { state.connected = false; render(); setTimeout(connect, 1500); };
-  ws.onmessage = (m) => { try { handle(JSON.parse(m.data)); } catch { /* ignore snapshot frames */ } };
+  ws.onopen = () => setPhase("ready");
+  ws.onclose = () => { setPhase("reconnecting"); setTimeout(connect, 1500); };
+  ws.onmessage = (m) => { try { handle(JSON.parse(m.data)); } catch { /* snapshot */ } };
 }
-
-setInterval(() => { state.now = new Date(); const el = document.querySelector(".live-status"); if (el) el.innerHTML = `<span class="live-dot"></span>${state.connected ? "LIVE" : "OFFLINE"} · ${state.now.toISOString().slice(11, 19)} UTC`; }, 1000);
-render();
-connect();
+layout(); connect();
