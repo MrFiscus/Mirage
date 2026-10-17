@@ -2,6 +2,7 @@ import { signalCount, signalsFrom } from "./alerts.js";
 import { collectTelemetry } from "./telemetry.js";
 import { audit, mustGet, runs, traceStep, update } from "./run.js";
 import { sendSms } from "./core.js";
+import { notifyAnalyst } from "./notify.js";
 
 export const analystPhone = () => process.env.ANALYST_PHONE ?? "+15550001002";
 
@@ -46,5 +47,7 @@ export async function applyFix(incidentId: string): Promise<void> {
     technicalSummary: incident.technicalSummary + " Fix applied; post-fix health checks and threat re-scan are clean.",
     businessSummary: incident.businessSummary + " The issue is resolved and the system is verified healthy.",
   });
-  sendSms(analystPhone(), `Batman: ${incident.id} resolved. Fix applied and verified clean.`);
+  // After an analyst's approval a short confirmation is enough; an automatic fix gets the full summary.
+  if (plan.approvedBy) sendSms(analystPhone(), `Batman: ${incident.title} resolved. The fix ${plan.approvedBy} approved was applied and the machine re-checked clean.`);
+  else await notifyAnalyst(incident);
 }

@@ -49,6 +49,7 @@ All `/voice/*` routes except `/voice/post-call` require the header `x-batman-sec
 | Server tool `send_code` | `POST /voice/tools/send-code` | `conversation_id`, `caller_id` |
 | Server tool `verify_code` | `POST /voice/tools/verify-code` | `conversation_id`, `caller_id`, `code` (LLM fills `code` from what the caller says) |
 | Server tool `get_incident_summary` | `POST /voice/tools/incident-summary` | `conversation_id`, `caller_id`, optional `incident_id` |
+| Server tool `decide_fix` | `POST /voice/tools/decide-fix` | `conversation_id`, `caller_id`, `decision` (enum `approve` / `reject`, LLM fills it from what the analyst says) |
 | Post-call webhook (transcription) | `POST /voice/post-call` | HMAC signed with `ELEVENLABS_WEBHOOK_SECRET`; emits `call.transcript` turns to the console |
 
 In every tool, set `conversation_id` to the dynamic variable `{{system__conversation_id}}` and `caller_id` to `{{system__caller_id}}`. Do not let the LLM fill them. The server creates the `CallSession` on the first tool call, rejects a `caller_id` that does not match the stored session, and decides `verified` and the role-filtered fields itself. CEO gets the business summary and fix state; analyst gets the technical summary, evidence, and fix plan; HR and developer get title and status; unverified and unknown callers get nothing.
@@ -56,6 +57,17 @@ In every tool, set `conversation_id` to the dynamic variable `{{system__conversa
 Suggested first message: `Hi {{caller_name}}, I'm Batman, an AI assistant. This call is logged.`
 
 The local `.env` fields `PHOTON_SIP_ADDRESS`, `PHOTON_SIP_USERNAME`, `PHOTON_SIP_PASSWORD`, and `ELEVENLABS_AGENT_ID` are presence checks only. SIP credentials stay local and are never returned by `/api/voice/readiness`. A ready response means the local configuration is populated; real call readiness still requires both dashboard configurations to be saved.
+
+### Outbound: Batman texts or calls the analyst
+
+When a run reaches a decision, `server/defense/notify.ts` picks how to tell the analyst at `ANALYST_PHONE` (it has to be an analyst in `data/users.json`):
+
+- **Urgent** (waiting for approval, or rated high): Batman places a call with the ElevenLabs SIP trunk outbound API (`server/voice/outbound.ts`) over the Photon number and texts a heads-up. On the call the agent texts a code, verifies it, reads a plain-English briefing built from the run's own steps (`server/defense/briefing.ts`: what happened, what Batman did, what it suggests), answers questions, and can take a spoken approve or reject through `decide_fix`. If the call can't be placed, the full summary goes out by text instead.
+- **Everything else** (fixed automatically, or the fix was rejected): one text with the same summary.
+
+On calls Batman placed, the server pins the dialled number and the incident to the conversation id, so tools ignore `caller_id` (it may be the Photon line) and `incident_id`. `decide_fix` works only on those calls, only for a verified analyst.
+
+Setup (once): set `VOICE_MODE=live`, `ELEVENLABS_API_KEY`, and `ELEVENLABS_PHONE_NUMBER_ID` (the imported Photon number's id in ElevenLabs). In the agent's **Security** tab, enable overrides for **First message** and **System prompt** (Batman sends the outbound script, `server/voice/outbound-script.ts`, with each call). Add the `decide_fix` tool. With the default shared iMessage channel, the analyst's phone must send one iMessage to its Photon line before Photon can text it. `VOICE_MODE=mock` (the default) logs the call instead of dialling, and the rest of the flow runs the same.
 
 ## Architecture
 

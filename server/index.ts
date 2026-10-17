@@ -11,6 +11,7 @@ import { VerificationService } from "./voice/verification.js";
 import { getVoiceReadiness } from "./voice/elevenlabs.js";
 import { voiceRouter } from "./voice/routes.js";
 import { mountDefense } from "./defense/mount.js";
+import { mirageRouter } from "./mirage/routes.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -35,6 +36,10 @@ const publish = emit;
 // Defense engine (Person 2): routes. Its events already go through core emit, which the
 // subscription above broadcasts, so forwarding them here again would double-send.
 mountDefense(app, () => undefined);
+
+// Mirage lane (Person C): honest env, simulator, ledger, progress, forensics + dashboard. Emits onto
+// the core bus, which the subscription above already forwards to the console WebSocket.
+app.use(mirageRouter);
 
 app.get("/api/health", (_request, response) => response.json({ ok: true, service: "batman-console" }));
 app.get("/api/voice/readiness", (_request, response) => response.json(getVoiceReadiness()));

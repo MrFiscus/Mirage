@@ -1,14 +1,16 @@
 import { detect, signalsFrom } from "./alerts.js";
 import { isPlaybook, runPlaybook } from "./playbooks.js";
-import { applyFix, analystPhone } from "./apply.js";
+import { runAgentPlaybook } from "./agent-playbook.js";
+import { applyFix } from "./apply.js";
+import { notifyAnalyst } from "./notify.js";
 import { runCloneCheck } from "./clonecheck.js";
 import { decide } from "./decision.js";
 import type { Investigator } from "./investigator.js";
 import { createInvestigator } from "./investigators.js";
 import { ScriptedPlanner, type FixPlanner } from "./planner.js";
+import { planWithDroid, type PlanResult } from "./droid.js";
 import { createCompanyMachine, VIRUS_PATH, type Sandbox } from "./sandbox/index.js";
 import { audit, lastStepKind, runs, timed, traceStart, traceStep, update } from "./run.js";
-import { sendSms } from "./core.js";
 import { collectTelemetry, QUERIES, type Telemetry } from "./telemetry.js";
 import { severityFloor } from "./investigator.js";
 import type { Incident } from "./contracts.js";
@@ -45,6 +47,7 @@ export async function startScenario(scenario: string, deps: ScenarioDeps = {}, i
 async function runScenario(scenario: string, deps: ScenarioDeps, id: string, machines: Sandbox[]): Promise<Incident> {
   // Demo tiers run on "Robin's PC"; the numbered and virus-* scenarios use the server attack below.
   if (isPlaybook(scenario)) return runPlaybook(scenario, id, machines);
+  if (scenario === "agent") return runAgentPlaybook(id, machines);
   const investigator = deps.investigator ?? createInvestigator();
   const planner = deps.planner ?? new ScriptedPlanner();
 
@@ -73,8 +76,11 @@ async function runScenario(scenario: string, deps: ScenarioDeps, id: string, mac
   traceStep(id, "investigation", { engine, trace, severity: inv.severity, confidence: inv.confidence, evidence: inv.evidence, floor: severityFloor(telemetry) }, trace?.ms);
 
   audit("voice.briefing_ready", "phone briefing updated for this incident");
-  const plan = await timed(id, "plan", () => planner.plan(scenario), (p) => ({ planner: planner.name ?? "planner", commands: p.commands, drastic: p.drastic }));
-  audit("fix.planned", `${planner.name ?? "planner"}: ${plan.commands.length} step${plan.commands.length === 1 ? "" : "s"}, ${plan.drastic ? "major change" : "minor change"}`);
+  const planned = await timed(id, "plan", () => planFix(scenario, planner, !deps.planner, inv.evidence),
+    (r) => ({ planner: r.engine === "droid" ? "Factory Droid" : planner.name ?? "planner", engine: r.engine, commands: r.plan.commands, drastic: r.plan.drastic, rationale: r.rationale, note: r.note }));
+  const plan = planned.plan;
+  const plannerName = planned.engine === "droid" ? "Factory Droid" : planner.name ?? "planner";
+  audit("fix.planned", `${plannerName}: ${plan.commands.length} step${plan.commands.length === 1 ? "" : "s"}, ${plan.drastic ? "major change" : "minor change"}${planned.note ? `; ${planned.note}` : ""}`);
   update(incident, { status: "testing_fix", proposedFix: plan });
   const clone = await timed(id, "clone.created", () => company.clone(), (c) => ({ id: c.id }));
   machines.push(clone);
@@ -97,15 +103,37 @@ async function runScenario(scenario: string, deps: ScenarioDeps, id: string, mac
       technicalSummary: incident.technicalSummary + ` Proposed fix rejected: ${decision.reason}. The company machine was not changed.`,
       businessSummary: incident.businessSummary + " A proposed fix was tested on a copy and rejected because it would have broken the application. The live system was not changed.",
     });
-    sendSms(analystPhone(), `Batman: fix for ${incident.id} REJECTED, ${decision.reason}. Live system untouched.`);
+    await notifyAnalyst(incident);
   } else if (decision.action === "await_approval") {
     update(incident, { status: "awaiting_approval" });
-    const n = checked.cloneCheck!.checks.length;
-    sendSms(analystPhone(), `Batman: ${incident.title}. Severity ${incident.severity}, confidence ${Math.round(incident.confidence * 100)}%. Fix passed the clone's health checks (${n}/${n}). Reply APPROVE ${incident.id} to apply.`);
+    await notifyAnalyst(incident);
   } else {
     await applyFix(incident.id);
   }
   return incident;
+}
+
+/**
+ * Droid writes the fix from the evidence when configured; the scripted plan is the fallback and sets the minimum
+ * "major change" level. Scenario 2 is the deliberately harmful plan the clone check must catch, so it stays scripted.
+ */
+async function planFix(scenario: string, planner: FixPlanner, useDroid: boolean, evidence: string[]): Promise<PlanResult> {
+  const fallback = await planner.plan(scenario);
+  if (!useDroid || scenario === "2") return { plan: fallback, engine: "scripted", note: scenario === "2" ? "deliberately harmful plan for the clone-check demo" : undefined };
+  const low = scenario === "virus-low";
+  return planWithDroid({
+    goal: low ? "Remove the unapproved scheduled task from this server." : "Remove the simulated intrusion from this server and restore it to its known-good state.",
+    machine: low
+      ? ["Scheduled tasks are files in cron/; approved ones were there before the alert."]
+      : [
+          "The unknown program's process id is stored in .run/rogue.pid; stop it and remove that file.",
+          "lib.cjs was modified; the known-good copy is .baseline/lib.cjs.",
+          "logs/network.log contains beacon lines to 10.0.0.99; remove only those lines and keep the rest (no sed -i; use grep -v into a temp file then mv; grep -v exits 1 when nothing is left).",
+          "cron/ holds scheduled task files; remove the one that beacons out.",
+        ],
+    checks: ["App starts", "App tests pass", "Key files match their known-good copies", "No unknown program running", "No outbound lines to unknown addresses in logs/network.log", "No unapproved scheduled task in cron/"],
+    evidence, drasticFloor: fallback.drastic, fallback,
+  });
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;

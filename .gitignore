@@ -5,3 +5,5 @@ data/runtime-state.json
 .DS_Store
 *.log
 !sim/app/logs/network.log
+data/mirage-ledger.jsonl
+data/cage-runs/
