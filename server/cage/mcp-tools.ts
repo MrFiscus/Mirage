@@ -14,10 +14,15 @@ export function isCageTool(id: string): boolean {
   return CAGE_TOOL_NAMES.some((n) => id === n || (id.endsWith(n) && id.includes(CAGE_MCP_SERVER)));
 }
 
-// Meta-tools the Droid CLI keeps on and does not let disabledToolIds turn off. These cannot touch the filesystem,
-// shell, or network — ToolSearch only searches tool *schemas*, and with every actionable builtin disabled there is
-// nothing for it to surface or run. So the lockdown treats them as inert, not as a leak.
-const BENIGN_META_TOOLS = new Set(["ToolSearch"]);
+// Meta-tools the agent needs in order to reach our MCP tools at all. Droid DEFERS MCP tools: it loads them with
+// ToolSearch and calls them through the Script tool, so disabling either leaves it with "no tools" (it just narrates).
+// Both are inert for our purposes — verified live: ToolSearch only searches tool schemas, and Script runs JS in a
+// sandbox with no `require` (throws "no modules"), no `process`, no `fetch`, and a `tools` object that starts as only
+// ToolSearch and can only ever call tools that are enabled in the session (ours). Every actionable builtin
+// (Execute, Read, Glob, Task, …) stays disabled, which is the real gate.
+const BENIGN_META_TOOLS = new Set(["ToolSearch", "Script"]);
+
+export const isMetaTool = (id: string): boolean => BENIGN_META_TOOLS.has(id);
 
 /** A non-cage tool that is still allowed is a lockdown leak UNLESS it is a known inert meta-tool. */
 export function isLockdownLeak(id: string, allowed: boolean): boolean {

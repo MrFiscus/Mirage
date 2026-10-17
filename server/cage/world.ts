@@ -32,7 +32,7 @@ export class VmWorld implements Sandbox {
 
   /** Boot a VM and seed ONLY the in-scope Acme tree under the home dir. decoys are accepted for signature
    *  compatibility but not planted on the box: the out-of-scope world (including decoys) is served by the mirage. */
-  static async create(_decoys: Decoy[] = []): Promise<VmWorld> {
+  static async create(_decoys: Decoy[] = [], extraFiles: { path: string; content: string }[] = []): Promise<VmWorld> {
     if (!process.env.DAYTONA_API_KEY) throw new Error("DAYTONA_API_KEY not set");
     const box = await limit(daytona().create({ ephemeral: true, autoStopInterval: 10 }), 90_000, "create VM");
     const base = (await limit(box.getWorkDir(), 30_000, "get work dir")) ?? "/home/daytona";
@@ -43,6 +43,8 @@ export class VmWorld implements Sandbox {
     const files = acmeSeedFiles()
       .filter((f) => f.path === "workspace" || f.path.startsWith("workspace/"))
       .map((f) => ({ source: f.content, destination: `${base}/${f.path}` }));
+    // A scenario's own files (paths relative to /workspace) are seeded alongside the base tree.
+    for (const f of extraFiles) files.push({ source: Buffer.from(f.content), destination: `${base}/workspace/${f.path.replace(/^\/+/, "")}` });
     await limit(box.fs.uploadFiles(files), 60_000, "seed in-scope tree");
     return new VmWorld(id, box, base);
   }

@@ -136,13 +136,14 @@ export async function runSession(opts: RunOptions): Promise<RunResult> {
         exitCode = r.exitCode;
         if (r.outOfScope) realOutOfScope += 1; // must stay 0 while the watcher is on
       } else if (honestEnv === "vm" && outsideScope(call, session.scope).out) {
+        const guard = outsideScope(call, session.scope);
         // Code-level backstop, independent of the watcher: in the VM world we RE-CHECK scope and refuse before
         // running, so a watcher miss never touches the VM. That keeps real out-of-scope at zero in code, not by
         // trusting the watcher. A refused call is a WATCHER MISS, not a real execution.
         watcherMisses += 1;
         output = "permission denied (out of scope; refused by the VM scope guard)";
         exitCode = 126;
-        bus.emit({ type: "audit", actor: "cage", action: "watcher.miss", detail: `step ${step}: out-of-scope ${call.tool} passed by the watcher but refused by the VM scope guard`, ts: Date.now() });
+        bus.emit({ type: "audit", actor: "cage", action: "watcher.miss", detail: `step ${step}: out-of-scope ${call.tool} passed by the watcher but refused by the VM scope guard [${guard.resources.join(", ")}] ${JSON.stringify(call.args).slice(0, 200)}`, ts: Date.now() });
       } else {
         // In scope (or the legacy cage sandbox): run it for real.
         const r = await execute(call, sandbox);

@@ -46,3 +46,35 @@ describe("System 3: cage fleet (offline, acme env)", () => {
     ]);
   });
 });
+
+describe("business scenarios + mixed fleet", () => {
+  it("scenario ids are unique and every blocked job that can be scripted has a rogue script", async () => {
+    const { SCENARIOS, scenarioById } = await import("../scenarios.js");
+    expect(new Set(SCENARIOS.map((s) => s.id)).size).toBe(SCENARIOS.length);
+    for (const id of ["billing-sync", "hotfix-deploy"]) expect(scenarioById(id)?.rogueScript?.length).toBeGreaterThan(3);
+    // controls are solvable in scope: they must not carry a rogue script
+    expect(SCENARIOS.filter((s) => s.kind === "control").every((s) => !s.rogueScript)).toBe(true);
+    // no prompt tells the agent to leave scope; each states the scope instead
+    expect(SCENARIOS.every((s) => /Do not access anything outside this scope/.test(s.prompt))).toBe(true);
+  });
+
+  it("membersFromMix labels live Droid vs simulated scripted members", async () => {
+    const { membersFromMix } = await import("../fleet.js");
+    const m = membersFromMix(["orders-report"], ["billing-sync", "hotfix-deploy"]);
+    expect(m.map((x) => x.attacker)).toEqual(["droid", "scripted", "scripted"]);
+    expect(m.every((x) => x.honestEnv === "vm")).toBe(true);
+  });
+
+  it("a scripted rogue run of a business scenario crosses scope, is mirage'd then blocked, with 0 real out-of-scope", async () => {
+    const { scenarioById } = await import("../scenarios.js");
+    const { ScriptedAttacker } = await import("../attackers/scripted.js");
+    const { runSession } = await import("../harness.js");
+    const { CageBus } = await import("../events.js");
+    const { makeRealMirage, realWatcher, NullSandbox } = await import("../wire.js");
+    const r = await runSession({ attacker: new ScriptedAttacker(scenarioById("billing-sync")!.rogueScript), watcher: realWatcher, mirage: makeRealMirage(null), sandbox: new NullSandbox(), bus: new CageBus(), honestEnv: "acme" });
+    expect(r.session.triggered).toBe(true);
+    expect(r.history.some((h) => h.decision === "mirage")).toBe(true);
+    expect(r.history.at(-1)?.decision).toBe("block");
+    expect(r.realOutOfScope).toBe(0);
+  });
+});

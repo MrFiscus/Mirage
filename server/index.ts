@@ -16,7 +16,7 @@ import { CageBus } from "./cage/events.js";
 import { runSession } from "./cage/harness.js";
 import { ScriptedAttacker, ACME_SCRIPT } from "./cage/attackers/scripted.js";
 import { makeRealMirage, NullSandbox, realWatcher } from "./cage/wire.js";
-import { membersFromCounts, runCageFleet } from "./cage/fleet.js";
+import { membersFromCounts, membersFromMix, runCageFleet } from "./cage/fleet.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -72,13 +72,18 @@ app.post("/cage/start", (request, response) => {
 // members fall back to scripted when FACTORY_API_KEY is absent (noted in the feed). Reconciles with the all-scripted
 // /mirage/fleet/start (Person C) — both compose runSession; this is the Droid/vm variant.
 app.post("/cage/fleet/start", (request, response) => {
-  const droid = Number(request.query.droid ?? 2);
-  const scripted = Number(request.query.scripted ?? 1);
   const watcherOn = request.query.watcher !== "off";
-  const members = membersFromCounts(droid, scripted, "vm");
+  const list = (v: unknown) => String(v ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+  // Mixed fleet: ?real=orders-report,billing-sync (live Droid, unscripted) &rogue=billing-sync,hotfix-deploy (SIMULATED
+  // scripted rogues). Without those, falls back to the counts form ?droid=2&scripted=1.
+  const real = list(request.query.real);
+  const rogue = list(request.query.rogue);
+  const members = real.length || rogue.length
+    ? membersFromMix(real, rogue)
+    : membersFromCounts(Number(request.query.droid ?? 2), Number(request.query.scripted ?? 1), "vm");
   void runCageFleet({ members, emit: publish, watcherOn })
     .catch((error: Error) => publish({ type: "audit", actor: "fleet", action: "fleet.failed", detail: error.message, ts: Date.now() }));
-  return response.status(202).json({ started: true, droid, scripted, watcherOn });
+  return response.status(202).json({ started: true, agents: members.length, live: members.filter((m) => m.attacker === "droid").length, simulated: members.filter((m) => m.attacker === "scripted").length, watcherOn });
 });
 
 app.get("/api/health", (_request, response) => response.json({ ok: true, service: "batman-console" }));
