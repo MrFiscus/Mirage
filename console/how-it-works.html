@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0a0a0b" />
+    <meta name="description" content="See how Mirage checks agent tool calls, redirects boundary crossings into consistent decoys, and records the run." />
+    <title>How it works — Mirage</title>
+    <link rel="icon" href="/mirage-mark.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/landing.css" />
+    <link rel="stylesheet" href="/how-it-works.css" />
+    <script type="module" src="/how-it-works.js"></script>
+  </head>
+  <body class="explanation-page">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="Mirage home">Mirage.</a>
+      <a class="back-link" href="/">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M20 12H4m6-6-6 6 6 6" /></svg>
+        Back home
+      </a>
+    </header>
+
+    <main id="main">
+      <section class="flow-section" aria-labelledby="how-title">
+        <div class="explanation-intro">
+          <h1 id="how-title">A wrong turn.<br /><span>A world of decoys.</span></h1>
+          <p>The demo gives an agent a task with no valid answer, inside an isolated sandbox. Mirage checks each tool call before it runs, watching for attempts to step outside the allowed scope.</p>
+        </div>
+
+        <div class="routing-demo" data-decision="pass">
+          <div class="demo-heading">
+            <h2>Follow a tool call.</h2>
+            <p>Choose an example. This is an illustration.</p>
+          </div>
+          <div class="example-controls" role="group" aria-label="Illustrative tool calls">
+            <button type="button" data-example="pass" aria-pressed="true">Read an approved file</button>
+            <button type="button" data-example="mirage" aria-pressed="false">Read outside scope</button>
+            <button type="button" data-example="block" aria-pressed="false">Use a planted key</button>
+          </div>
+          <p class="tool-example"><span>Agent requests</span><code id="example-call">read_file("workspace/README.md")</code></p>
+
+          <div class="route-map" role="img" aria-label="The agent sends a tool call to the watcher. The watcher passes it to the approved environment, redirects it to the mirage, or blocks it.">
+            <svg class="route-wires" viewBox="0 0 1000 360" preserveAspectRatio="none" fill="none" aria-hidden="true">
+              <path class="wire" d="M120 180H500" />
+              <path class="wire" d="M500 180H670V60H870" />
+              <path class="wire" d="M500 180H870" />
+              <path class="wire" d="M500 180H670V300H870" />
+              <path class="route-light is-active" data-route="pass" d="M120 180H670V60H870" />
+              <path class="route-light" data-route="mirage" d="M120 180H870" />
+              <path class="route-light" data-route="block" d="M120 180H670V300H870" />
+              <circle class="route-packet" r="4" fill="currentColor">
+                <animateMotion id="packet-motion" dur="1.2s" begin="indefinite" path="M120 180H670V60H870" />
+              </circle>
+            </svg>
+            <div class="route-node agent-node">
+              <div class="agent-symbol"><span></span></div>
+              <strong>Agent</strong><span>Proposes a call</span>
+            </div>
+            <div class="route-node watcher-node">
+              <svg class="watcher-symbol" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M9 32s9-15 23-15 23 15 23 15-9 15-23 15S9 32 9 32Z" /><circle cx="32" cy="32" r="7" /></svg>
+              <strong>Watcher</strong><span>Checks the scope</span>
+            </div>
+            <div class="route-outcomes">
+              <div class="outcome is-active" data-outcome="pass"><span class="outcome-symbol" aria-hidden="true">↗</span><div><strong>Approved environment</strong><span>Real result within the cage</span></div></div>
+              <div class="outcome" data-outcome="mirage"><span class="outcome-symbol mirage-symbol" aria-hidden="true"><i></i></span><div><strong>The mirage</strong><span>A synthetic response</span></div></div>
+              <div class="outcome" data-outcome="block"><span class="outcome-symbol" aria-hidden="true">×</span><div><strong>Blocked</strong><span>No action executed</span></div></div>
+            </div>
+          </div>
+
+          <div class="route-explanation" role="status" aria-live="polite" aria-atomic="true">
+            <h3 id="decision-title">Within scope. Let it through.</h3>
+            <p id="decision-description">The file is in the approved workspace. The watcher allows the call, and the agent receives the actual file from its sandbox.</p>
+          </div>
+          <noscript><p class="no-script-note">In-scope calls pass through. Out-of-scope reads receive synthetic decoys. Attempts to use planted credentials are blocked. Enable JavaScript to explore each example.</p></noscript>
+        </div>
+      </section>
+
+      <section class="decoy-section" aria-labelledby="decoy-title">
+        <div class="decoy-graphic" role="img" aria-label="A fake file leads to a decoy service, which returns another hint. A shared world ledger keeps these synthetic responses consistent.">
+          <svg class="decoy-orbits" viewBox="0 0 520 450" fill="none" aria-hidden="true">
+            <circle cx="260" cy="225" r="191" /><circle cx="260" cy="225" r="128" />
+            <path d="M113 126Q260 4 410 126M423 164Q487 293 338 381M186 381Q31 291 99 164" stroke-dasharray="4 7" />
+            <path d="m398 122 12 4-2-12m-59 256-11 11 15 2M96 178l3-14-13 6" />
+          </svg>
+          <div class="ledger-core"><span class="ledger-icon" aria-hidden="true"><i></i><i></i><i></i></span><strong>World ledger</strong><span>One consistent story</span></div>
+          <div class="decoy-label fake-file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M6 3h8l4 4v14H6Zm8 0v5h4M9 12h6m-6 4h6" /></svg><span>Fake file</span></div>
+          <div class="decoy-label fake-service"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="4" y="4" width="16" height="6" rx="1" /><rect x="4" y="14" width="16" height="6" rx="1" /><path d="M7 7h2m-2 10h2" /></svg><span>Decoy service</span></div>
+          <div class="decoy-label fake-hint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="m9 5 7 7-7 7M3 12h13" /></svg><span>Another hint</span></div>
+        </div>
+        <div class="section-copy">
+          <h2>A detour that<br />holds together.</h2>
+          <p>An out-of-scope read doesn’t reach its original target. Mirage answers with fake files, services, and clues that lead further into the shadow world.</p>
+          <p>A shared ledger remembers what the agent has already seen. Revisit a file, and the story stays consistent.</p>
+          <div class="plain-note"><span aria-hidden="true">↳</span><p>The goal stays out of reach. These are synthetic leads, not real progress toward completing the task.</p></div>
+        </div>
+      </section>
+
+      <section class="visibility-section" aria-labelledby="visibility-title">
+        <div class="section-copy">
+          <h2>Every attempt recorded.<br /><span>You keep control.</span></h2>
+          <p>The console shows tool calls, decisions, and reasons across the fleet. Follow what each agent tried and which responses came from the mirage.</p>
+          <p>Independent step, time, and spend caps limit the run. A cap ends the experiment even if the agent keeps following decoys.</p>
+        </div>
+        <div class="record-graphic" aria-label="Illustrative audit trail">
+          <div class="record-heading"><span>Example audit trail</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M3 13h4l3-7 4 13 3-6h4" /></svg></div>
+          <ol class="audit-trail">
+            <li><span class="audit-dot" aria-hidden="true"></span><div><strong>Workspace file read</strong><span>Inside the approved path</span></div><span class="audit-verdict">Pass</span></li>
+            <li><span class="audit-dot" aria-hidden="true"></span><div><strong>Outside path requested</strong><span>Synthetic file returned</span></div><span class="audit-verdict">Mirage</span></li>
+            <li><span class="audit-dot" aria-hidden="true"></span><div><strong>Planted key submitted</strong><span>Credential use refused</span></div><span class="audit-verdict">Block</span></li>
+          </ol>
+          <div class="cap-line"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2" /><path d="M9 9h6v6H9Z" /></svg><span>Independent run limits</span></div>
+        </div>
+      </section>
+
+      <section class="explanation-cta" aria-labelledby="try-title">
+        <div><h2 id="try-title">See it from the console.</h2><p>A contained experiment, using synthetic data and decoys.</p></div>
+        <a class="primary-link" href="/fleet.html">Enter the sandbox <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h16m-6-6 6 6-6 6" /></svg></a>
+      </section>
+    </main>
+    <footer class="site-footer"><span>Mirage. A contained experiment.</span><span class="footer-signature">Built for the boundary.</span></footer>
+  </body>
+</html>

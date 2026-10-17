@@ -5,7 +5,6 @@ document.querySelector("#landing").innerHTML = `
   <header class="site-header">
     <a class="brand" href="/" aria-label="Mirage home">Mirage.</a>
     <nav class="site-nav" aria-label="Main navigation">
-      <button class="text-link" id="how-open" type="button" aria-haspopup="dialog">How it works</button>
       <button class="motion-toggle" id="motion-toggle" type="button" aria-label="Pause animation" aria-pressed="false" title="Pause animation"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M7 5v10M13 5v10"/></svg></button>
     </nav>
   </header>
@@ -16,14 +15,15 @@ document.querySelector("#landing").innerHTML = `
       <p class="hero-description">When an agent steps outside its scope, Mirage redirects it into a world of decoys. Watch every move. Stay in control.</p>
       <div class="hero-actions">
         <a class="primary-link" href="/fleet.html">Enter the sandbox ${arrow}</a>
+        <a class="primary-link outline-link" href="/how-it-works.html">How it works ${arrow}</a>
       </div>
     </div>
 
     <div class="world" aria-hidden="true">
       <div class="world-orbit orbit-outer"></div>
       <div class="world-orbit orbit-inner"></div>
-      <div class="world-disc"><span class="world-signal"><span class="world-signal-runner"><i></i></span></span><span class="world-core"></span><span class="world-caption">A WORLD WITHIN REACH.<br />ALWAYS OUT OF SCOPE.</span></div>
-      <div class="world-agent-track"><span class="world-satellite"></span></div>
+      <div class="world-disc"><span class="world-signal"><span class="world-signal-runner"><i></i></span></span><span class="world-core"><svg class="world-watcher" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 32s9-15 23-15 23 15 23 15-9 15-23 15S9 32 9 32Z"/><circle class="world-watcher-pupil" cx="32" cy="32" r="6"/></svg></span><span class="world-caption">A WORLD WITHIN REACH.<br />ALWAYS OUT OF SCOPE.</span></div>
+      <div class="world-agent-track"><span class="world-bot"><svg viewBox="0 0 64 64" fill="none"><path d="M32 9v8" stroke="#e0e0e0" stroke-width="2.5" stroke-linecap="round"/><circle cx="32" cy="7" r="3" fill="#e0e0e0"/><rect x="6" y="28" width="5" height="15" rx="2.5" fill="#a4a4a7"/><rect x="53" y="28" width="5" height="15" rx="2.5" fill="#a4a4a7"/><rect x="11" y="17" width="42" height="37" rx="11" fill="#e0e0e0"/><rect x="17" y="24" width="30" height="19" rx="6" fill="#18181b"/><g class="world-bot-eyes" fill="#e0e0e0"><rect x="23" y="29" width="4" height="8" rx="2"/><rect x="37" y="29" width="4" height="8" rx="2"/></g><path d="M28 48h8" stroke="#737379" stroke-width="2" stroke-linecap="round"/></svg></span></div>
       <div class="world-request-track"><span></span></div>
       <span class="world-coordinate">THE SHADOW WORLD / 01</span>
     </div>
@@ -34,18 +34,6 @@ document.querySelector("#landing").innerHTML = `
     <span class="footer-signature">Built for the boundary.</span>
   </footer>
 
-  <dialog class="how-dialog" id="how-dialog" aria-labelledby="how-title">
-    <div class="how-header"><a class="brand" href="/">Mirage.</a><button class="close-button" id="how-close" type="button" aria-label="Close how it works"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
-    <div class="how-body">
-      <h2 id="how-title">How it works.</h2>
-      <ol class="how-steps">
-        <li><div><h3>Observe.</h3><p>The watcher checks each tool call before it runs. In-scope actions continue to the honest environment.</p></div></li>
-        <li><div><h3>Redirect.</h3><p>Out-of-scope requests get synthetic responses from the mirage. A consistent trail of decoys gives the agent somewhere else to go.</p></div></li>
-        <li><div><h3>Contain.</h3><p>Planted credential use is blocked. The cage caps the run, while the console records the calls and verdicts.</p></div></li>
-      </ol>
-      <a class="primary-link" href="/fleet.html">Enter the sandbox ${arrow}</a>
-    </div>
-  </dialog>
 `;
 
 const world = document.querySelector('.world');
@@ -66,20 +54,3 @@ motionButton.addEventListener('click', () => { motionPaused = !motionPaused; upd
 reducedMotion.addEventListener('change', updateMotion);
 document.addEventListener('visibilitychange', updateMotion);
 updateMotion();
-
-const dialog = document.querySelector("#how-dialog");
-const openButton = document.querySelector("#how-open");
-openButton.addEventListener("click", () => {
-  dialog.showModal();
-  document.body.classList.add("dialog-open");
-});
-document.querySelector("#how-close").addEventListener("click", () => dialog.close());
-dialog.addEventListener("click", (event) => {
-  if (event.target !== dialog) return;
-  const bounds = dialog.getBoundingClientRect();
-  if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) dialog.close();
-});
-dialog.addEventListener("close", () => {
-  document.body.classList.remove("dialog-open");
-  openButton.focus();
-});
