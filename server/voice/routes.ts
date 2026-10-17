@@ -5,8 +5,7 @@ import { emit } from "../core/events.js";
 import { getIncident, getSession, listIncidents, lookupCaller, saveSession } from "../core/store.js";
 import { approve, reject } from "../defense/approval.js";
 import { incidentViewFor } from "./disclosure.js";
-import { attachMockNotificationBridge, type DefenderNotifier } from "./outbound.js";
-import { getOutboundCall } from "./outbound.js";
+import { attachNotificationBridge, getMirageOutboundCall, getOutboundCall, type DefenderNotifier } from "./outbound.js";
 import { MAX_CODE_ATTEMPTS, type VerificationService } from "./verification.js";
 
 const MAX_CODE_SENDS = 3;
@@ -49,7 +48,7 @@ function requireVoiceSecret(request: Request, response: Response, next: NextFunc
 function resolveSession(body: Record<string, unknown>): CallSession | { error: string; status: number } {
   const conversationId = typeof body.conversation_id === "string" ? body.conversation_id.trim() : "";
   // On a call Batman placed, caller_id can be the Photon line itself; the number Batman dialled is the one on record.
-  const outbound = conversationId ? getOutboundCall(conversationId) : undefined;
+  const outbound = conversationId ? getOutboundCall(conversationId) ?? getMirageOutboundCall(conversationId) : undefined;
   if (outbound) {
     const session = getSession(conversationId);
     if (session) return session;
@@ -70,7 +69,7 @@ function resolveSession(body: Record<string, unknown>): CallSession | { error: s
 
 export function voiceRouter(
   verification: VerificationService,
-  notifications: Pick<DefenderNotifier, "getBriefing"> = attachMockNotificationBridge()
+  notifications: Pick<DefenderNotifier, "getBriefing"> = attachNotificationBridge()
 ): express.Router {
   const router = express.Router();
 
@@ -173,7 +172,7 @@ export function voiceRouter(
       emit({ type: "disclosure", conversationId: session.conversationId, role: session.role, fields: [], allowed: false });
       return response.json({ allowed: false, message: "Verify the caller before sharing the Mirage alert." });
     }
-    const briefing = notifications.getBriefing(session.role);
+    const briefing = notifications.getBriefing(session.role, session.conversationId);
     if (!briefing) {
       emit({ type: "disclosure", conversationId: session.conversationId, role: session.role, fields: [], allowed: false });
       return response.json({ allowed: false, message: "No alert is available to this caller." });

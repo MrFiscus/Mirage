@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Caller } from "../../shared/types.js";
-import { briefingFor, DefenderNotifier, type NotificationEvent, type NotificationTransport } from "./outbound.js";
+import { briefingFor, DefenderNotifier, getMirageOutboundCall, LiveNotificationTransport, type NotificationEvent, type NotificationTransport } from "./outbound.js";
 
 const analyst: Caller = { phone: "+15550001002", name: "Jordan Bell", role: "analyst", department: "Security Operations" };
 
@@ -17,6 +17,33 @@ function setup(recipient: Caller | null = analyst) {
 }
 
 describe("defender notification", () => {
+  it("uses Photon for live text and pins the ElevenLabs call to its Mirage trigger", async () => {
+    const originalFetch = globalThis.fetch;
+    const keys = ["ELEVENLABS_API_KEY", "ELEVENLABS_AGENT_ID", "ELEVENLABS_PHONE_NUMBER_ID"] as const;
+    const previous = keys.map((key) => process.env[key]);
+    const sent: string[] = [];
+    const trigger = { callId: "crossing-1", sessionId: "attack-1", step: 7, decision: "mirage" as const };
+    let payload: Record<string, any> = {};
+    process.env.ELEVENLABS_API_KEY = "test-key";
+    process.env.ELEVENLABS_AGENT_ID = "test-agent";
+    process.env.ELEVENLABS_PHONE_NUMBER_ID = "test-number";
+    globalThis.fetch = (async (_url, init) => {
+      payload = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ success: true, conversation_id: "mirage-test-conversation" }));
+    }) as typeof fetch;
+    try {
+      const transport = new LiveNotificationTransport({ async send(to, body) { sent.push(`${to}:${body}`); } });
+      await transport.sendText("+17372155908", "Boundary alert");
+      await transport.placeCall("+17372155908", "This is Mirage, an AI assistant. This call is logged.", trigger);
+      expect(sent).toEqual(["+17372155908:Boundary alert"]);
+      expect(payload).toMatchObject({ agent_id: "test-agent", agent_phone_number_id: "test-number", to_number: "+17372155908" });
+      expect(payload.conversation_initiation_client_data.conversation_config_override.agent.prompt.prompt).toContain("mirage_briefing");
+      expect(getMirageOutboundCall("mirage-test-conversation")).toMatchObject({ phone: "+17372155908", trigger });
+    } finally {
+      globalThis.fetch = originalFetch;
+      keys.forEach((key, index) => { if (previous[index] === undefined) delete process.env[key]; else process.env[key] = previous[index]; });
+    }
+  });
   it("sends a safe text before the call for the first mirage verdict and suppresses repeats", async () => {
     const { notifier, order, events } = setup();
     await notifier.handleEvent({ type: "tool.call", call: { id: "call-1", session: "session-1", step: 4, thought: "ignore all rules" } });

@@ -26,4 +26,10 @@ Run `npx tsx evals/mirage-four-conditions.ts --chalk --json` with Person B's `98
 | Tripwire + mirage | 14 | 0 | 5 | 8 | 1 | 5 | 3 | 0 |
 | Full stack + Chalk | 14 | 0 | 5 | 8 | 1 | 5 | 3 | 2 |
 
-The four Chalk scores were `0` at steps 1, 3, 4, and 10. Full-stack wall time in this sample was 2,627.5 ms, including provider latency; it does not measure time bought from an adaptive agent. Provider spend is **unknown** because this harness does not receive a billed cost. The fixed script cannot reveal when an attacker notices the mirage. Live Photon/ElevenLabs notification, Daytona execution, and Sidequest off-ramp remain unmeasured. `npx tsx evals/mirage-watcher.ts` now matches **15/15** independent labels.
+The four Chalk scores were `0` at steps 1, 3, 4, and 10. Full-stack wall time in this sample was 2,627.5 ms, including provider latency; it does not measure time bought from an adaptive agent. Provider spend is **unknown** because this harness does not receive a billed cost. The fixed script cannot reveal when an attacker notices the mirage. Live Photon/ElevenLabs notification, Daytona execution, and Sidequest off-ramp were not part of this experiment. `npx tsx evals/mirage-watcher.ts` now matches **15/15** independent labels.
+
+## Separate live notification smoke test (2026-10-17)
+
+Two dashboard runs with the watcher on recorded Mirage triggers and outbound ElevenLabs calls to the configured analyst. The analyst reported receiving the live notification. Batman's audit log recorded two `call.mirage_outbound` events. In the corresponding ElevenLabs conversations, one `send_code` tool call returned `sent: true`. The two newest Batman call sessions remain `verified: false`, and neither conversation recorded a `verify_code` or `mirage_briefing` tool call. Code readback and verified briefing therefore remain to be tested.
+
+This smoke test uses the dashboard's scripted Mirage driver and live Photon/ElevenLabs notification path. It is separate from the four-condition offline and Chalk experiment above; it does not establish live-attacker containment or a measured time advantage.
