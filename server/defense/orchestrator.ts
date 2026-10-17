@@ -2,7 +2,8 @@ import { detect } from "./alerts.js";
 import { applyFix, analystPhone } from "./apply.js";
 import { runCloneCheck } from "./clonecheck.js";
 import { decide } from "./decision.js";
-import { RuleInvestigator, type Investigator } from "./investigator.js";
+import type { Investigator } from "./investigator.js";
+import { createInvestigator } from "./investigators.js";
 import { ScriptedPlanner, type FixPlanner } from "./planner.js";
 import { createCompanyMachine, VIRUS_PATH } from "./sandbox/index.js";
 import { audit, runs, update } from "./run.js";
@@ -19,7 +20,7 @@ export const newIncidentId = (scenario: string) => `inc-${scenario}-${Date.now()
 
 /** Runs the loop up to the decision. Returns the incident; if it is awaiting_approval, call approve() next. */
 export async function startScenario(scenario: string, deps: ScenarioDeps = {}, id = newIncidentId(scenario)): Promise<Incident> {
-  const investigator = deps.investigator ?? new RuleInvestigator();
+  const investigator = deps.investigator ?? createInvestigator();
   const planner = deps.planner ?? new ScriptedPlanner();
 
   const company = await createCompanyMachine();
@@ -37,9 +38,9 @@ export async function startScenario(scenario: string, deps: ScenarioDeps = {}, i
   update(incident, {});
 
   update(incident, { status: "investigating" });
-  const inv = await investigator.investigate(telemetry);
-  update(incident, { ...inv });
-  audit("investigation.done", `severity ${inv.severity}, confidence ${inv.confidence}, ${inv.evidence.length} evidence items`);
+  const { engine, ...inv } = await investigator.investigate(telemetry);
+  update(incident, inv);
+  audit("investigation.done", `${engine ?? "investigator"}: severity ${inv.severity}, confidence ${inv.confidence}, ${inv.evidence.length} evidence items`);
 
   const plan = await planner.plan(scenario);
   update(incident, { status: "testing_fix", proposedFix: plan });
