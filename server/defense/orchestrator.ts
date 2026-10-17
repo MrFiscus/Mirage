@@ -1,0 +1,77 @@
+import { detect } from "./alerts";
+import { applyFix, analystPhone } from "./apply";
+import { runCloneCheck } from "./clonecheck";
+import { decide } from "./decision";
+import { RuleInvestigator, type Investigator } from "./investigator";
+import { ScriptedPlanner, type FixPlanner } from "./planner";
+import { createCompanyMachine, VIRUS_PATH } from "./sandbox";
+import { audit, runs, update } from "./run";
+import { sendSms } from "./mocks/core";
+import { collectTelemetry } from "./telemetry";
+import type { Incident } from "./contracts";
+
+export interface ScenarioDeps {
+  investigator?: Investigator;
+  planner?: FixPlanner;
+}
+
+/** Runs the loop up to the decision. Returns the incident; if it is awaiting_approval, call approve() next. */
+export async function startScenario(scenario: string, deps: ScenarioDeps = {}): Promise<Incident> {
+  const investigator = deps.investigator ?? new RuleInvestigator();
+  const planner = deps.planner ?? new ScriptedPlanner();
+
+  const company = await createCompanyMachine();
+  audit("scenario.start", `scenario ${scenario}; company machine ${company.id} created`);
+  const baseline = await collectTelemetry(company);
+  if (!baseline.health.every((c) => c.passed)) throw new Error("company machine unhealthy before the attack");
+
+  await company.exec(`node "${VIRUS_PATH}"`); // the simulated attack
+  audit("sim.virus", "harmless simulated virus executed on company machine", "simulator");
+
+  const telemetry = await collectTelemetry(company);
+  const incident = detect(telemetry, `inc-${scenario}-${Date.now().toString(36)}`);
+  if (!incident) throw new Error("no alert raised");
+  runs.set(incident.id, { company });
+  update(incident, {});
+
+  update(incident, { status: "investigating" });
+  const inv = await investigator.investigate(telemetry);
+  update(incident, { ...inv });
+  audit("investigation.done", `severity ${inv.severity}, confidence ${inv.confidence}, ${inv.evidence.length} evidence items`);
+
+  const plan = await planner.plan(scenario);
+  update(incident, { status: "testing_fix", proposedFix: plan });
+  const clone = await company.clone();
+  runs.get(incident.id)!.clone = clone;
+  audit("clone.created", `clone ${clone.id} created`);
+  const report = await runCloneCheck(clone, plan.commands);
+  const failedBefore = report.before.filter((c) => !c.passed).map((c) => c.name);
+  audit("clone.checked", `before fix failing: [${failedBefore.join(", ")}]; after fix passed=${report.cloneCheck.passed}`);
+  const checked = { ...plan, cloneCheck: report.cloneCheck };
+  update(incident, { proposedFix: checked });
+  await clone.destroy();
+
+  const decision = decide(checked);
+  audit("decision", `${decision.action}: ${decision.reason}`);
+  if (decision.action === "reject") {
+    update(incident, {
+      status: "fix_rejected",
+      technicalSummary: incident.technicalSummary + ` Proposed fix rejected: ${decision.reason}. The company machine was not changed.`,
+      businessSummary: incident.businessSummary + " A proposed fix was tested on a copy and rejected because it would have broken the application. The live system was not changed.",
+    });
+    sendSms(analystPhone(), `Batman: fix for ${incident.id} REJECTED, ${decision.reason}. Live system untouched.`);
+  } else if (decision.action === "await_approval") {
+    update(incident, { status: "awaiting_approval" });
+    const n = checked.cloneCheck!.checks.length;
+    sendSms(analystPhone(), `Batman: ${incident.title}. Severity ${incident.severity}, confidence ${Math.round(incident.confidence * 100)}%. Fix passed the clone's health checks (${n}/${n}). Reply APPROVE ${incident.id} to apply.`);
+  } else {
+    await applyFix(incident.id);
+  }
+  return incident;
+}
+
+export async function cleanup(incidentId: string): Promise<void> {
+  const ctx = runs.get(incidentId);
+  await ctx?.company.destroy();
+  runs.delete(incidentId);
+}
