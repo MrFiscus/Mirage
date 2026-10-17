@@ -64,14 +64,22 @@ export function voiceRouter(verification: VerificationService): express.Router {
 
   router.post("/voice/init", express.json(), requireVoiceSecret, (request, response) => {
     const phone = normalizePhone(request.body?.caller_id);
+    const conversationId = typeof request.body?.conversation_id === "string" ? request.body.conversation_id.trim() : "";
+    let session: CallSession | null = null;
+    if (phone && conversationId) {
+      const resolved = resolveSession(request.body);
+      if ("error" in resolved) return response.status(resolved.status).json({ error: resolved.error });
+      session = resolved;
+    }
     const caller = phone ? lookupCaller(phone) : null;
-    emit({ type: "audit", actor: "voice", action: "call.ringing", detail: caller ? `known ${caller.role}` : "unknown caller", ts: Date.now() });
+    const callerDetail = phone ? `caller ending ${phone.slice(-4)}` : "caller ID missing or invalid";
+    emit({ type: "audit", actor: "voice", action: "call.ringing", detail: `${callerDetail}; ${caller ? `known ${caller.role}` : "unknown caller"}`, ts: Date.now() });
     // Role here only sets the agent's tone. Access is decided per tool call from the stored session.
     response.json({
       type: "conversation_initiation_client_data",
       dynamic_variables: {
         caller_name: caller?.name ?? "there",
-        caller_role: caller?.role ?? "unknown",
+        caller_role: session?.role ?? caller?.role ?? "unknown",
         caller_department: caller?.department ?? "unknown",
         caller_known: caller ? "true" : "false",
         verified: "false"
