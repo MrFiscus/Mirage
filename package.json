@@ -12,7 +12,9 @@
     "dev:defense": "tsx server/defense/dev-server.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "eval:cases": "tsx evals/build-cases.ts"
+    "eval:cases": "tsx evals/build-cases.ts",
+    "cage": "tsx server/cage/cli.ts",
+    "cage:killtest": "tsx server/cage/killtest.ts"
   },
   "dependencies": {
     "@daytonaio/sdk": "^0.225.0",
