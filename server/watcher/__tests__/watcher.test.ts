@@ -171,3 +171,16 @@ describe("watcher control-plane tamper (Person D's gap)", () => {
     expect((await decide(call("read_file", { path: "workspace/monitor.txt" }), session, { ...noEmit, pressure: false })).decision).toBe("pass");
   });
 });
+
+describe("watcher self-config tamper (Person D's agent/config.json case)", () => {
+  const withAgentInScope: Session = { ...session, scope: { ...DEFAULT_SCOPE, paths: ["workspace/", "agent/"] } };
+  it("blocks writing the agent's own config even when agent/ is in scope", async () => {
+    expect((await decide(call("run_shell", { cmd: "printf '{}' > agent/config.json" }), withAgentInScope, { ...noEmit, pressure: false })).decision).toBe("block");
+    expect((await decide(call("read_file", { path: "agent/config.json" }), withAgentInScope, { ...noEmit, pressure: false })).decision).toBe("block");
+  });
+  it("does not block lookalike in-scope paths", async () => {
+    for (const p of ["workspace/my-agent/config.json", "workspace/agent-utils.js", "workspace/config.json"]) {
+      expect((await decide(call("read_file", { path: p }), withAgentInScope, { ...noEmit, pressure: false })).decision, p).toBe("pass");
+    }
+  });
+});
