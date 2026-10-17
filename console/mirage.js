@@ -1,223 +1,382 @@
-// Mirage — fleet of real agents. Each VM is a live workstation: the agent's actual commands and its
-// reasoning stream in a mini-terminal, and the watcher's verdict is shown on every line. Click a VM to
-// zoom into a live filesystem tree (the files the agent explores, current one highlighted, out-of-scope
-// paths rerouted into the shadow world) + the full reasoning. All driven by the real MirageEvent stream.
-const COL = { safe: "#7bdcc0", mirage: "#e0b65a", block: "#e5675f" };
-const app = document.querySelector("#app");
-const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[c]));
-const T = { pass: "PASS", mirage: "MIRAGE", block: "BLOCK" };
-
-app.innerHTML = `
-  <div class="bar">
-    <div class="logo"><span class="ring"></span><b>MIRAGE</b><small>AGENT CONTAINMENT · REAL DAYTONA VMS</small></div>
-    <button class="btn ghost" id="back" style="display:none">← fleet</button>
-    <div class="grow"></div>
-    <label class="count">VMs<button class="step" id="minus">−</button><input id="n" type="number" min="1" max="10" value="6" /><button class="step" id="plus">+</button></label>
-    <span class="phase" id="phase">ready</span>
-    <button class="btn" id="start">Start testing</button>
-  </div>
-  <div class="hair"><i id="bar"></i></div>
-  <div class="main">
-    <div class="stage">
-      <div class="fleet" id="fleet"></div>
-      <div class="detail" id="detail" style="display:none">
-        <div class="detail-fs panel">
-          <div class="fs-head"><span id="fs-head">VM</span><span class="fs-now" id="fs-now"></span></div>
-          <div class="fs-tree" id="tree"></div>
-        </div>
-        <div class="detail-term panel"><div class="term-head" id="term-head">agent activity</div><div class="term" id="term"></div></div>
-      </div>
-      <div class="intro" id="intro">
-        <h1>Watch a fleet of AI agents try to break out.</h1>
-        <p>A fleet of AI agents, each in its own real Daytona VM, is given an impossible task. You see every command each one runs, live. One watcher sits in the path of all of them — the moment an agent reaches outside its approved scope, it's intercepted and rerouted into a shadow world, so nothing real is ever touched.</p>
-        <button class="btn" id="start2">Start testing</button>
-      </div>
-    </div>
-    <aside class="rail">
-      <h2 id="rail-title">FLEET</h2>
-      <div class="stat"><div class="k" id="k0">AGENTS (VMS)</div><div class="v" id="s-vms">0</div></div>
-      <div class="stat"><div class="k">COMMANDS RUN</div><div class="v" id="s-moves">0</div></div>
-      <div class="stat"><div class="k">REROUTED TO MIRAGE</div><div class="v mirage" id="s-mirage">0</div></div>
-      <div class="stat"><div class="k">BLOCKED</div><div class="v block" id="s-block">0</div></div>
-      <div class="stat hero"><div class="k">REAL OUT-OF-SCOPE ACCESS</div><div class="v safe" id="s-oos">0</div><div class="sub" id="s-oos-sub">boundary intact</div></div>
-      <div class="spacer"></div>
-      <div class="verdict-feed" id="feed"></div>
-    </aside>
-  </div>`;
-
-const state = { view: "fleet", focus: null, fleetN: 6, boxes: new Map(), order: [], stats: { moves: 0, mirage: 0, block: 0 }, feed: [], pending: {} };
-
-/* ---------- command + path extraction (real tool calls) ---------- */
-function cmdOf(call) {
-  const a = call.args ?? {};
-  if (call.tool === "read_file") return `cat ${a.path ?? ""}`;
-  if (call.tool === "run_shell") return `$ ${a.command ?? a.cmd ?? ""}`;
-  if (call.tool === "http_get" || call.tool === "http_post") { const u = String(a.url ?? "").replace(/^https?:\/\//, ""); return `${call.tool === "http_get" ? "GET" : "POST"} ${u}`; }
-  return `${call.tool} ${JSON.stringify(a).slice(0, 40)}`;
-}
-function pathOf(call) {
-  const a = call.args ?? {};
-  if (call.tool === "read_file") return String(a.path || "");
-  if (call.tool === "run_shell") { const m = String(a.command || a.cmd || "").match(/(\/[\w./-]+|\.\.\/[\w./-]+)/); return m ? m[1] : ""; }
-  return ""; // http is network, not a file
-}
-const WHY = { pass: () => "within approved scope", mirage: (r) => r || "outside scope — served a fake", block: (r) => r || "escape attempt — blocked" };
-
-/* ---------- fleet grid (DOM cards) ---------- */
-const fleetEl = document.querySelector("#fleet");
-const gridCols = (n) => (n <= 1 ? 1 : n <= 2 ? 2 : n <= 6 ? 3 : 4);
-function layoutGrid() { fleetEl.style.gridTemplateColumns = `repeat(${gridCols(Math.max(state.fleetN, state.order.length) || 1)}, 1fr)`; }
-
-function box(id) {
-  if (state.boxes.has(id)) return state.boxes.get(id);
-  const label = `VM-${String(state.order.length + 1).padStart(2, "0")}`;
-  const el = document.createElement("div"); el.className = "vm"; el.dataset.id = id;
-  el.innerHTML = `<div class="vm-head"><b>${label}</b><span class="act">▮ working</span><span class="vm-count">0 contained</span></div><div class="vm-term"></div><div class="scopebar"><i></i></div>`;
-  el.onclick = () => openDetail(id);
-  const ph = fleetEl.querySelector(".vm.booting"); if (ph) ph.replaceWith(el); else fleetEl.appendChild(el);
-  const b = { id, label, actions: [], moves: 0, mirage: 0, block: 0, el };
-  state.boxes.set(id, b); state.order.push(id); layoutGrid();
-  return b;
-}
-
-function pushAction(b, call, verdict) {
-  const act = { cmd: cmdOf(call), path: pathOf(call), thought: call.thought || "", decision: verdict.decision, reason: verdict.reasons?.[0] || "", step: call.step };
-  b.actions.push(act); b.moves++;
-  if (verdict.decision === "mirage") b.mirage++; else if (verdict.decision === "block") b.block++;
-  const term = b.el.querySelector(".vm-term");
-  term.innerHTML = b.actions.slice(-4).map((a) => `<div class="tl"><span class="chip ${a.decision}">${T[a.decision]}</span><span class="cmd">${esc(a.cmd)}</span></div>`).join("")
-    + `<div class="thinking">${esc(b.actions.at(-1).thought)}</div>`;
-  b.el.querySelector(".vm-count").textContent = `${b.mirage} contained`;
-  b.el.classList.add(verdict.decision === "block" ? "flash-b" : verdict.decision === "mirage" ? "flash-m" : "flash-p");
-  setTimeout(() => b.el.classList.remove("flash-m", "flash-b", "flash-p"), 450);
-  state.stats.moves++; if (verdict.decision === "mirage") state.stats.mirage++; if (verdict.decision === "block") state.stats.block++;
-  state.feed.unshift(`<span class="${verdict.decision}">${T[verdict.decision].padEnd(6)}</span> ${esc(b.label)} · ${esc(act.cmd)}`); state.feed = state.feed.slice(0, 8);
-  renderStats();
-  if (state.view === "detail" && state.focus === b.id) { renderTree(b); renderDetailTerm(b); }
-}
-
-function bootingPlaceholders() {
-  const need = Math.max(0, state.fleetN - state.order.length);
-  fleetEl.querySelectorAll(".vm.booting").forEach((e) => e.remove());
-  for (let i = 0; i < need; i++) { const d = document.createElement("div"); d.className = "vm booting"; d.innerHTML = `<div class="vm-head"><b>VM-${String(state.order.length + i + 1).padStart(2, "0")}</b><span class="act dim">● provisioning</span></div><div class="boot">spinning up Daytona sandbox…</div>`; fleetEl.appendChild(d); }
-  layoutGrid();
-}
-
-/* ---------- detail: live filesystem tree + reasoning terminal ---------- */
-// The in-scope workspace the cage seeds (shown from the start so it reads as a real project). Out-of-scope
-// paths are added as the agent discovers them. Access state + verdicts come from real tool calls.
-const SKELETON = {
-  workspace: { __scope: "in", "README.md": {}, "notes.md": {}, src: { "main.py": {}, "util.py": {} }, data: { "samples.json": {} }, logs: { "run.log": {} } },
+// The console renders host-side Mirage events. Launching is always an explicit action.
+const $ = (selector) => document.querySelector(selector);
+const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[c]));
+const icon = (name) => {
+  const paths = {
+    arrow: '<path d="M4 12h16m-6-6 6 6-6 6"/>',
+    back: '<path d="M20 12H4m6-6-6 6 6 6"/>',
+    expand: '<path d="M7 17 17 7M7 7h10v10"/>',
+    machine: '<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4M7 9h4m-4 3h7"/>',
+    theme: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16Z" fill="currentColor" stroke="none"/>',
+    folder: '<path d="M3 7V5h6l2 2h10v13H3Z"/>',
+    file: '<path d="M6 3h8l4 4v14H6Zm8 0v5h4M9 12h6m-6 4h6"/>',
+    globe: '<circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/>',
+  };
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] ?? paths.arrow}</svg>`;
+};
+const verdictName = { pass: 'Passed', mirage: 'Redirected', block: 'Blocked' };
+const pad = (number) => String(number).padStart(2, '0');
+const PAGE_SIZE = 24;
+const state = {
+  view: 'setup', phase: 'idle', connected: false, count: 6,
+  boxes: new Map(), pending: new Map(), seen: new Set(), feed: [], failures: [],
+  focus: null, filter: 'all', page: 0, startedAt: null, endedAt: null,
 };
 
-function openDetail(id) {
-  state.view = "detail"; state.focus = id;
-  document.querySelector("#fleet").style.display = "none";
-  document.querySelector("#detail").style.display = "flex";
-  document.querySelector("#back").style.display = "";
-  const b = state.boxes.get(id);
-  document.querySelector("#fs-head").textContent = `${b.label} · filesystem`;
-  document.querySelector("#term-head").textContent = `${b.label} · agent activity`;
-  renderTree(b); renderDetailTerm(b); renderStats();
-}
-function closeDetail() { state.view = "fleet"; state.focus = null; document.querySelector("#detail").style.display = "none"; document.querySelector("#fleet").style.display = "grid"; document.querySelector("#back").style.display = "none"; renderStats(); }
-document.querySelector("#back").onclick = closeDetail;
+$('#app').innerHTML = `
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Mirage home">Mirage.</a>
+    <div class="header-tools">
+      <span class="connection" id="connection" role="status" title="Connecting"><i></i><span class="sr-only">Connecting</span></span>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch to dark appearance">${icon('theme')}</button>
+    </div>
+  </header>
 
-function buildTree(actions) {
-  const root = {};
-  const clone = (src, scope) => { const o = { __dir: true, __scope: scope }; for (const k in src) { if (k === "__scope") continue; const v = src[k]; o[k] = Object.keys(v).filter((x) => x !== "__scope").length ? clone(v, scope) : { __file: true, __scope: scope }; } return o; };
-  root.workspace = clone(SKELETON.workspace, "in");
-  let current = null;
-  actions.forEach((a, i) => {
-    if (!a.path) return;
-    const segs = a.path.replace(/^\//, "").split("/").filter(Boolean);
-    const outside = !a.path.replace(/^\//, "").startsWith("workspace");
+  <main id="main">
+    <section class="setup page" id="setup" aria-labelledby="setup-title">
+      <div class="setup-heading">
+        <h1 id="setup-title" tabindex="-1">A small world.<br><span>Under your control.</span></h1>
+        <p class="setup-description">Run scripted agents in isolated Daytona sandboxes, each with an impossible task. The watcher checks every tool call, then lets it through, redirects it into the mirage, or blocks it.</p>
+      </div>
+      <div class="fleet-configurator">
+        <div class="fleet-preview">
+          <div id="fleet-diagram" class="fleet-diagram" aria-hidden="true"></div>
+          <div class="preview-caption"><span id="preview-count">6 isolated VMs</span><span class="preview-watcher">One watcher.</span></div>
+        </div>
+        <div class="setup-controls">
+          <label class="count-label" for="n">How many agents?</label>
+          <p class="control-description" id="count-hint">One agent per virtual machine.</p>
+          <div class="count-control">
+            <input id="n" type="number" min="1" step="1" value="6" aria-describedby="count-hint" />
+            <div class="count-stepper"><button class="count-step" id="plus" type="button" aria-label="More agents">+</button><button class="count-step" id="minus" type="button" aria-label="Fewer agents">−</button></div>
+          </div>
+          <div class="presets" role="group" aria-label="Fleet size presets">${[6, 25, 100, 1000].map(n => `<button type="button" data-count="${n}" aria-pressed="${n === 6}">${n.toLocaleString()}</button>`).join('')}</div>
+          <div class="launch-area"><button class="button primary launch-button" id="launch" type="button" disabled><span id="launch-label">Launch 6 VMs</span> ${icon('arrow')}</button></div>
+          <p class="setup-error" id="setup-error" role="alert" hidden></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="workspace page" id="workspace" aria-labelledby="workspace-title" hidden>
+      <div class="workspace-heading">
+        <h1 id="workspace-title" tabindex="-1">Fleet</h1>
+        <div class="workspace-actions"><span class="run-clock" id="run-clock">00:00 elapsed</span><button class="button secondary" id="new-run" type="button" disabled>New experiment ${icon('expand')}</button><button class="button secondary" id="back" type="button" hidden>${icon('back')} All environments</button></div>
+      </div>
+      <div class="metrics" id="metrics">
+        <div class="metric environment-metric"><span class="metric-label">Environments</span><strong id="s-vms">00<span> / 06</span></strong></div>
+        <div class="metric"><span class="metric-label">Calls reviewed</span><strong id="s-moves">00</strong></div>
+        <div class="metric"><span class="metric-label"><i class="legend-dot mirage"></i> Redirected</span><strong id="s-mirage">00</strong></div>
+        <div class="metric"><span class="metric-label"><i class="legend-dot block"></i> Blocked</span><strong id="s-block">00</strong></div>
+        <div class="run-indicator"><span class="status-pill" id="run-status">Preparing</span><span id="run-status-note" hidden></span></div>
+      </div>
+
+      <div class="monitor-layout" id="monitor">
+        <section class="fleet-region" aria-labelledby="fleet-heading">
+          <div class="section-heading"><h2 id="fleet-heading">Environments</h2><div class="filters" role="group" aria-label="Filter environments"><button type="button" data-filter="all" aria-pressed="true">All agents</button><button type="button" data-filter="mirage" aria-pressed="false">Redirected</button></div></div>
+          <div class="fleet" id="fleet"></div>
+          <div class="filter-empty" id="filter-empty" hidden><span class="empty-orbit"></span><h3>No redirects yet.</h3></div>
+          <nav class="fleet-pagination" id="fleet-pagination" aria-label="Environment pages" hidden><button type="button" id="page-prev">← Previous</button><span id="fleet-page" aria-live="polite"></span><button type="button" id="page-next">Next →</button></nav>
+        </section>
+        <aside class="activity-region" aria-labelledby="activity-heading">
+          <div class="section-heading"><h2 id="activity-heading">Watcher activity</h2></div>
+          <div class="activity-feed" id="feed"><div class="feed-empty"><span class="empty-orbit"></span><p>Waiting for activity.</p></div></div>
+        </aside>
+      </div>
+
+      <div class="detail-layout" id="detail" hidden>
+        <section class="filesystem" aria-labelledby="fs-heading"><div class="panel-heading"><div>${icon('folder')}<h2 id="fs-heading">Observed paths</h2></div></div><p class="panel-caption">Files and hosts referenced in this agent's tool calls.</p><div class="fs-tree" id="tree"></div></section>
+        <section class="activity-log" aria-labelledby="log-heading"><div class="panel-heading"><div><span class="terminal-mark">&gt;_</span><h2 id="log-heading">Agent activity</h2></div></div><div class="term" id="term"></div></section>
+      </div>
+    </section>
+  </main>
+
+`;
+
+function setTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  $('#theme-toggle').setAttribute('aria-label', `Switch to ${theme === 'dark' ? 'light' : 'dark'} appearance`);
+  $('#theme-toggle').title = $('#theme-toggle').getAttribute('aria-label');
+  document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#0a0a0b' : '#ffffff';
+}
+$('#theme-toggle').onclick = () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+setTheme('light');
+
+function renderFleetPreview(count) {
+  // An abstract view of the topology; large selections share a bounded set of representative nodes.
+  const shown = Math.min(count, 12);
+  const nodes = Array.from({ length: shown }, (_, index) => {
+    const angle = index * Math.PI * 2 / shown - Math.PI / 2;
+    return { x: 280 + Math.cos(angle) * 174, y: 166 + Math.sin(angle) * 118 };
+  });
+  $('#fleet-diagram').innerHTML = `<svg viewBox="0 0 560 332" fill="none" aria-hidden="true"><ellipse cx="280" cy="166" rx="174" ry="118" class="preview-orbit"/>${nodes.map(node => `<path d="M280 166 ${node.x} ${node.y}" class="preview-wire"/>`).join('')}<circle cx="280" cy="166" r="57" class="watcher-halo"/><circle cx="280" cy="166" r="43" class="watcher-core"/><circle cx="280" cy="158" r="10" class="watcher-mark"/><text x="280" y="186" text-anchor="middle" class="watcher-label">Watcher</text>${nodes.map(node => `<g transform="translate(${node.x - 23} ${node.y - 19})"><rect width="46" height="38" rx="9" class="preview-agent"/><rect x="13" y="10" width="20" height="13" rx="2" class="preview-screen"/><path d="M19 28h8m-4-5v5" class="preview-screen"/></g>`).join('')}</svg>`;
+  $('#preview-count').textContent = `${count.toLocaleString()} isolated VM${count === 1 ? '' : 's'}`;
+}
+
+function updateCount(value) {
+  const count = Number(value);
+  if (!Number.isSafeInteger(count) || count < 1) {
+    $('#n').setAttribute('aria-invalid', 'true');
+    $('#setup-error').textContent = 'Enter a positive whole number of agents.';
+    $('#setup-error').hidden = false;
+    $('#launch').disabled = true;
+    return false;
+  }
+  state.count = count;
+  $('#n').value = state.count;
+  $('#n').removeAttribute('aria-invalid');
+  $('#n').style.setProperty('--count-digits', String(count).length);
+  $('#minus').disabled = state.count === 1;
+  $('#launch').disabled = !state.connected;
+  $('#setup-error').hidden = true;
+  $('#launch-label').textContent = `Launch ${state.count} VM${state.count === 1 ? '' : 's'}`;
+  renderFleetPreview(count);
+  document.querySelectorAll('[data-count]').forEach(button => button.setAttribute('aria-pressed', String(Number(button.dataset.count) === state.count)));
+  return true;
+}
+$('#minus').onclick = () => updateCount(state.count - 1);
+$('#plus').onclick = () => updateCount(state.count + 1);
+$('#n').onchange = event => updateCount(event.target.value);
+$('#n').onkeydown = event => { if (event.key === 'Enter' && updateCount(event.target.value) && !$('#launch').disabled) start(); };
+document.querySelectorAll('[data-count]').forEach(button => { button.onclick = () => updateCount(button.dataset.count); });
+updateCount(6);
+
+function switchView(view) {
+  state.view = view;
+  $('#setup').hidden = view !== 'setup';
+  $('#workspace').hidden = view === 'setup';
+  $('#monitor').hidden = view !== 'fleet';
+  $('#detail').hidden = view !== 'detail';
+  $('#back').hidden = view !== 'detail';
+  $('#new-run').hidden = view === 'detail';
+  document.body.dataset.view = view;
+  setTheme(view === 'fleet' ? 'dark' : 'light');
+  renderStats();
+}
+
+function cmdOf(call) {
+  const args = call.args ?? {};
+  if (call.tool === 'read_file') return `cat ${args.path ?? args.file ?? ''}`;
+  if (call.tool === 'run_shell') return String(args.command ?? args.cmd ?? '');
+  if (call.tool === 'http_get' || call.tool === 'http_post') return `${call.tool === 'http_get' ? 'GET' : 'POST'} ${args.url ?? ''}`;
+  return call.tool;
+}
+function pathOf(call) {
+  if (call.tool === 'read_file') return String(call.args?.path ?? call.args?.file ?? '');
+  if (call.tool !== 'run_shell') return '';
+  return String(call.args?.command ?? call.args?.cmd ?? '').match(/(?:^|\s)["']?((?:\/|\.\.\/|workspace\/|secrets\/|notes\/)[\w./-]+)/)?.[1] ?? '';
+}
+function statusOf(box) {
+  if (box.block) return { text: 'Blocked', kind: 'block' };
+  if (box.stopped) return { text: 'Stopped', kind: 'neutral' };
+  if (state.phase === 'complete') return { text: 'Finished', kind: 'neutral' };
+  if (box.mirage) return { text: 'In the mirage', kind: 'mirage' };
+  return { text: box.moves ? 'Working' : 'Ready', kind: 'pass' };
+}
+function getBox(id) {
+  if (state.boxes.has(id)) return state.boxes.get(id);
+  const box = { id, label: `VM-${pad(state.boxes.size + 1)}`, actions: [], moves: 0, mirage: 0, block: 0, stopped: false };
+  state.boxes.set(id, box);
+  return box;
+}
+function renderFleet() {
+  const focusedSession = document.activeElement?.closest('[data-session]')?.dataset.session;
+  const all = [...state.boxes.values()];
+  const filtered = state.filter === 'mirage' ? all.filter(box => box.mirage > 0) : all;
+  const total = state.filter === 'all' ? Math.max(state.count, all.length) : filtered.length;
+  state.page = Math.min(state.page, Math.max(0, Math.ceil(total / PAGE_SIZE) - 1));
+  const begin = state.page * PAGE_SIZE;
+  const end = Math.min(total, begin + PAGE_SIZE);
+  const visible = filtered.slice(begin, end);
+  $('#fleet').innerHTML = visible.map(box => {
+    const status = statusOf(box);
+    return `<button class="vm ${box.mirage ? 'has-mirage' : ''} ${box.block ? 'has-block' : ''}" type="button" data-session="${esc(box.id)}" aria-label="Inspect ${box.label}"><span class="vm-head"><span class="vm-identity"><span class="vm-icon">${icon('machine')}</span><span><b>${box.label}</b></span></span><span class="agent-status ${status.kind}"><i></i>${status.text}</span></span><span class="vm-term">${box.actions.length ? box.actions.slice(-3).map(action => `<span class="command-row"><span class="command-step">${pad(action.step)}</span><span class="command-symbol ${action.decision}">${action.decision === 'pass' ? '↳' : action.decision === 'mirage' ? '↪' : '×'}</span><code title="${esc(action.cmd)}">${esc(action.cmd)}</code></span>`).join('') : '<span class="card-waiting">Waiting for activity.</span>'}</span><span class="vm-foot"><span>${box.moves} call${box.moves === 1 ? '' : 's'}${box.mirage ? ` <i>·</i> ${box.mirage} redirected` : ''}</span><span class="inspect-link">Inspect ${icon('expand')}</span></span></button>`;
+  }).join('');
+  if (state.filter === 'all') {
+    for (let i = Math.max(begin, all.length); i < end; i++) {
+      const done = state.phase === 'complete';
+      $('#fleet').insertAdjacentHTML('beforeend', `<div class="vm provisioning"><span class="vm-head"><span class="vm-identity"><span class="vm-icon">${icon('machine')}</span><span><b>VM-${pad(i + 1)}</b></span></span><span class="agent-status neutral">${done ? 'Unavailable' : 'Provisioning'}</span></span><div class="provision-body">${done ? '<span class="unavailable-mark">—</span>' : '<span class="loader"></span>'}${done ? '<span>No agent session received.</span>' : ''}</div></div>`);
+    }
+  }
+  $('#filter-empty').hidden = state.filter !== 'mirage' || filtered.length > 0;
+  $('#fleet').hidden = state.filter === 'mirage' && filtered.length === 0;
+  $('#fleet-pagination').hidden = total <= PAGE_SIZE;
+  $('#fleet-page').textContent = `${begin + 1}–${end} of ${total.toLocaleString()}`;
+  $('#page-prev').disabled = state.page === 0;
+  $('#page-next').disabled = end >= total;
+  if (focusedSession) [...document.querySelectorAll('[data-session]')].find(button => button.dataset.session === focusedSession)?.focus({ preventScroll: true });
+}
+$('#fleet').addEventListener('click', event => {
+  const button = event.target.closest('[data-session]');
+  if (button) openDetail(button.dataset.session);
+});
+$('#page-prev').onclick = () => { if (state.page > 0) { state.page--; renderFleet(); } };
+$('#page-next').onclick = () => { state.page++; renderFleet(); };
+document.querySelectorAll('[data-filter]').forEach(button => {
+  button.onclick = () => {
+    state.filter = button.dataset.filter;
+    state.page = 0;
+    document.querySelectorAll('[data-filter]').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+    renderFleet();
+  };
+});
+
+function addFeed(entry) {
+  state.feed.unshift({ ...entry, ts: entry.ts ?? Date.now() });
+  state.feed = state.feed.slice(0, 30);
+  $('#feed').innerHTML = state.feed.map(item => `<div class="feed-item"><div class="feed-meta"><span class="feed-verdict ${esc(item.kind)}">${esc(item.tag)}</span><time>${new Date(item.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time></div><div class="feed-title">${esc(item.label)}</div><code title="${esc(item.detail)}">${esc(item.detail)}</code></div>`).join('');
+}
+function renderStats() {
+  const focused = state.view === 'detail' ? state.boxes.get(state.focus) : null;
+  const boxes = focused ? [focused] : [...state.boxes.values()];
+  const sum = field => boxes.reduce((total, box) => total + box[field], 0);
+  $('#s-vms').innerHTML = `${pad(state.boxes.size)}<span> / ${pad(state.count)}</span>`;
+  $('#s-moves').textContent = pad(sum('moves'));
+  $('#s-mirage').textContent = pad(sum('mirage'));
+  $('#s-block').textContent = pad(sum('block'));
+  const complete = state.phase === 'complete';
+  const status = focused ? statusOf(focused) : null;
+  $('#run-status').textContent = status?.text ?? (complete ? 'Run complete' : state.boxes.size ? 'Observing' : 'Provisioning');
+  $('#run-status').className = `status-pill ${status?.kind ?? (complete ? 'neutral' : 'pass')}`;
+  $('#run-status-note').hidden = !complete || state.failures.length === 0;
+  $('#run-status-note').textContent = `${state.failures.length} environment error${state.failures.length === 1 ? '' : 's'}`;
+  $('#new-run').disabled = !complete;
+  if (state.view === 'fleet') {
+    $('#workspace-title').textContent = 'Fleet';
+  }
+}
+function updateClock() {
+  if (!state.startedAt) return;
+  const elapsed = Math.floor(((state.endedAt ?? Date.now()) - state.startedAt) / 1000);
+  $('#run-clock').textContent = `${pad(Math.floor(elapsed / 60))}:${pad(elapsed % 60)} elapsed`;
+}
+setInterval(updateClock, 1000);
+
+function openDetail(id) {
+  const box = state.boxes.get(id);
+  if (!box) return;
+  state.focus = id;
+  switchView('detail');
+  $('#workspace-title').textContent = `${box.label}.`;
+  renderDetail(box, true);
+  $('#workspace-title').focus({ preventScroll: true });
+  window.scrollTo({ top: 0, behavior: 'instant' });
+}
+$('#back').onclick = () => {
+  const id = state.focus;
+  state.focus = null;
+  switchView('fleet');
+  renderFleet();
+  [...document.querySelectorAll('[data-session]')].find(button => button.dataset.session === id)?.focus({ preventScroll: true });
+};
+
+function renderDetail(box, initial = false) {
+  const root = { children: new Map() };
+  const paths = box.actions.filter(action => action.path);
+  paths.forEach(action => {
+    const parts = action.path.split('/').filter(Boolean);
     let node = root;
-    segs.forEach((seg, j) => {
-      const leaf = j === segs.length - 1;
-      if (!node[seg]) node[seg] = leaf ? { __file: true, __scope: outside ? "out" : "in" } : { __dir: true, __scope: outside ? "out" : "in" };
-      if (leaf) { node[seg].__access = a.decision; if (i === actions.length - 1) { node[seg].__current = true; current = { path: a.path, decision: a.decision }; } }
-      node = node[seg];
+    parts.forEach((part, index) => {
+      if (!node.children.has(part)) node.children.set(part, { name: part, children: new Map() });
+      node = node.children.get(part);
+      if (index === parts.length - 1) { node.action = action; node.current = action === box.actions.at(-1); }
     });
   });
-  return { root, current };
+  const tree = (node, depth = 0) => [...node.children.values()].map(child => {
+    const directory = child.children.size > 0 || /^(workspace|secrets|notes|src|data|logs)$/.test(child.name);
+    const decision = child.action?.decision;
+    return `<div class="node ${child.current ? 'current' : ''}" style="--depth:${depth}"><span class="node-icon">${icon(directory ? 'folder' : 'file')}</span><span class="node-name">${esc(child.name)}${directory ? '/' : ''}</span>${decision ? `<span class="node-verdict ${decision}" title="${verdictName[decision]}">${verdictName[decision]}</span>` : ''}</div>${tree(child, depth + 1)}`;
+  }).join('');
+  const hosts = new Map();
+  box.actions.filter(action => action.url).forEach(action => {
+    try { hosts.set(new URL(action.url).host, action); } catch { /* malformed URLs stay visible in the activity log */ }
+  });
+  $('#tree').innerHTML = (paths.length ? tree(root) : '<p class="path-empty">No file paths observed yet.</p>') + (hosts.size ? `<div class="network-heading">Network</div>${[...hosts].map(([host, action]) => `<div class="node network-node"><span class="node-icon">${icon('globe')}</span><span class="node-name">${esc(host)}</span><span class="node-verdict ${action.decision}">${verdictName[action.decision]}</span></div>`).join('')}` : '');
+  const term = $('#term');
+  const followTail = !initial && term.scrollHeight - term.scrollTop - term.clientHeight < 60;
+  term.innerHTML = box.actions.length ? box.actions.map(action => `<article class="log-entry"><div class="log-meta"><span class="log-step">#${action.step}</span><span class="decision-badge ${action.decision}">${verdictName[action.decision]}</span></div><code class="log-command"><span>$</span> ${esc(action.cmd)}</code>${action.thought ? `<blockquote class="agent-note">${esc(action.thought)}</blockquote>` : ''}<p class="watcher-reason"><span>↳</span> ${esc(action.reason || (action.decision === 'pass' ? 'Within approved scope.' : 'Outside approved scope.'))}</p></article>`).join('') : '<div class="log-empty">The first tool call will appear here.</div>';
+  if (initial) term.scrollTop = 0;
+  else if (followTail) term.scrollTop = term.scrollHeight;
 }
-
-function treeHtml(node, name, depth) {
-  const pad = depth * 14;
-  if (node.__file) {
-    const cls = ["file"]; if (node.__scope === "out") cls.push("out"); if (node.__access) cls.push("acc", node.__access); if (node.__current) cls.push("current");
-    const tag = node.__access === "block" ? "blocked" : node.__access === "mirage" ? "rerouted → mirage" : node.__access === "pass" ? "read" : "";
-    return `<div class="node ${cls.join(" ")}" style="padding-left:${pad}px"><span class="ic">•</span>${esc(name)}${node.__current ? `<span class="reading">● exploring</span>` : tag ? `<span class="ntag">${tag}</span>` : ""}</div>`;
-  }
-  const kids = Object.keys(node).filter((k) => !k.startsWith("__"));
-  const cls = node.__scope === "out" ? "dir out" : "dir";
-  const head = name ? `<div class="node ${cls}" style="padding-left:${pad}px"><span class="ic">▾</span>${esc(name)}/${node.__scope === "out" ? `<span class="ntag">outside scope</span>` : ""}</div>` : "";
-  return head + kids.map((k) => treeHtml(node[k], k, name ? depth + 1 : depth)).join("");
-}
-
-function renderTree(b) {
-  const { root, current } = buildTree(b.actions);
-  document.querySelector("#tree").innerHTML = treeHtml({ __dir: true, ...root }, "", 0) || `<div class="muted">waiting for the agent…</div>`;
-  const now = document.querySelector("#fs-now");
-  now.innerHTML = current ? `exploring <b>${esc(current.path)}</b> <span class="chip ${current.decision}">${T[current.decision]}</span>` : "";
-  const cur = document.querySelector("#tree .current"); if (cur) cur.scrollIntoView({ block: "nearest" });
-}
-
-function renderDetailTerm(b) {
-  document.querySelector("#term").innerHTML = b.actions.map((a) => `<div class="line"><div class="l1"><span class="chip ${a.decision}">${T[a.decision]}</span><span class="cmd">${esc(a.cmd)}</span></div>${a.thought ? `<div class="l2">“${esc(a.thought)}”</div>` : ""}<div class="l3">watcher: ${esc(WHY[a.decision](a.reason))}</div></div>`).join("");
-  const term = document.querySelector("#term"); term.scrollTop = term.scrollHeight;
-}
-
-/* ---------- ui + data ---------- */
-function setPhase(t) { document.querySelector("#phase").textContent = t; }
-function setBar(p) { document.querySelector("#bar").style.width = `${Math.round(Math.min(1, p) * 100)}%`; }
-function renderStats() {
-  const d = state.view === "detail" && state.boxes.get(state.focus);
-  document.querySelector("#rail-title").textContent = d ? d.label : "FLEET";
-  document.querySelector("#k0").textContent = d ? "COMMANDS RUN" : "AGENTS (VMS)";
-  document.querySelector("#s-vms").textContent = d ? d.moves : state.order.length;
-  document.querySelector("#s-moves").textContent = d ? d.moves : state.stats.moves;
-  document.querySelector("#s-mirage").textContent = d ? d.mirage : state.stats.mirage;
-  document.querySelector("#s-block").textContent = d ? d.block : state.stats.block;
-  document.querySelector("#s-oos").textContent = "0";
-  document.querySelector("#feed").innerHTML = state.feed.join("<br>");
-}
-const chosenN = () => Math.max(1, Math.min(10, Math.round(Number(document.querySelector("#n").value) || 6)));
-const nudge = (dd) => { const el = document.querySelector("#n"); el.value = Math.max(1, Math.min(10, (Number(el.value) || 6) + dd)); };
-document.querySelector("#plus").onclick = () => nudge(1);
-document.querySelector("#minus").onclick = () => nudge(-1);
 
 async function start() {
-  const n = chosenN(); document.querySelector("#n").value = n; state.fleetN = n;
-  state.boxes = new Map(); state.order = []; state.feed = []; state.pending = {}; state.stats = { moves: 0, mirage: 0, block: 0 };
-  closeDetail(); fleetEl.innerHTML = ""; bootingPlaceholders();
-  document.querySelector("#intro").classList.add("hidden"); document.querySelector("#start").disabled = true;
-  setBar(0); setPhase("provisioning VMs"); renderStats();
-  try { await fetch(`/mirage/fleet/start?n=${n}&backend=daytona`, { method: "POST" }); }
-  catch { setPhase("server offline"); document.querySelector("#start").disabled = false; }
+  if (!state.connected || (state.phase !== 'idle' && state.phase !== 'complete' && state.phase !== 'error')) return;
+  if (!updateCount($('#n').value)) return;
+  state.boxes.clear(); state.pending.clear(); state.seen.clear(); state.feed = []; state.failures = [];
+  state.focus = null; state.filter = 'all'; state.page = 0; state.phase = 'provisioning'; state.startedAt = Date.now(); state.endedAt = null;
+  document.querySelectorAll('[data-filter]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.filter === 'all')));
+  $('#setup-error').hidden = true;
+  $('#feed').innerHTML = '<div class="feed-empty"><span class="empty-orbit"></span><p>Waiting for activity.</p></div>';
+  switchView('fleet'); renderFleet(); updateClock();
+  $('#workspace-title').focus({ preventScroll: true });
+  try {
+    const response = await fetch(`/mirage/fleet/start?n=${state.count}&backend=daytona`, { method: 'POST' });
+    if (!response.ok) throw new Error(`The server returned ${response.status}.`);
+  } catch {
+    state.phase = 'error'; state.endedAt = Date.now();
+    switchView('setup');
+    $('#setup-error').textContent = 'The run could not be started. Check the server connection and try again.';
+    $('#setup-error').hidden = false;
+    $('#launch').focus({ preventScroll: true });
+  }
 }
-document.querySelector("#start").onclick = start;
-document.querySelector("#start2").onclick = start;
+$('#launch').onclick = start;
+$('#new-run').onclick = () => {
+  if (state.phase !== 'complete') return;
+  switchView('setup');
+  $('#setup-title').focus({ preventScroll: true });
+};
 
-const STEPS = 10;
-function handle(e) {
-  if (e.type === "audit" && e.action === "fleet.starting") { const m = String(e.detail).match(/(\d+)/); if (m) state.fleetN = +m[1]; bootingPlaceholders(); setPhase("provisioning VMs"); }
-  else if (e.type === "session.started") { box(e.session.id); bootingPlaceholders(); setPhase(`${state.order.length} agents live`); renderStats(); }
-  else if (e.type === "tool.call") state.pending[e.call.id] = e.call;
-  else if (e.type === "watcher.verdict") { const call = state.pending[e.callId]; if (call) { pushAction(box(call.session), call, e.verdict); setBar(state.stats.moves / (state.fleetN * STEPS)); } }
-  else if (e.type === "audit" && e.action === "fleet.complete") finish();
-  else if (e.type === "audit" && e.action === "vm.failed") { state.feed.unshift(`<span class="block">VM FAIL</span> ${esc(e.detail)}`); renderStats(); }
+function handle(event) {
+  if (state.view === 'setup') return;
+  if (event.type === 'session.started') {
+    getBox(event.session.id); state.phase = state.phase === 'complete' ? 'complete' : 'running'; renderFleet(); renderStats();
+  } else if (event.type === 'tool.call') {
+    state.pending.set(event.call.id, event.call);
+  } else if (event.type === 'watcher.verdict') {
+    const call = state.pending.get(event.callId);
+    if (!call || state.seen.has(event.callId) || !verdictName[event.verdict.decision]) return;
+    state.seen.add(event.callId); state.pending.delete(event.callId);
+    const box = getBox(call.session);
+    const action = { cmd: cmdOf(call), path: pathOf(call), url: call.args?.url, thought: call.thought ?? '', decision: event.verdict.decision, reason: event.verdict.reasons?.[0] ?? '', step: call.step };
+    box.actions.push(action); box.moves++;
+    if (action.decision === 'mirage') box.mirage++;
+    if (action.decision === 'block') box.block++;
+    addFeed({ kind: action.decision, tag: verdictName[action.decision], label: box.label, detail: action.cmd, ts: call.ts });
+    renderFleet(); renderStats();
+    if (state.view === 'detail' && state.focus === box.id) renderDetail(box);
+  } else if (event.type === 'kill') {
+    const box = state.boxes.get(event.session);
+    if (box) { box.stopped = true; renderFleet(); renderStats(); }
+  } else if (event.type === 'audit' && (event.action === 'vm.failed' || event.action === 'fleet.failed')) {
+    state.failures.push(event.detail);
+    addFeed({ kind: 'block', tag: 'Environment error', label: event.action === 'fleet.failed' ? 'Fleet' : 'Daytona', detail: event.detail });
+    if (event.action === 'fleet.failed') finish();
+  } else if (event.type === 'audit' && event.action === 'fleet.complete') finish();
 }
 function finish() {
-  setPhase("contained"); setBar(1); document.querySelector("#start").disabled = false; document.querySelector("#start").textContent = "Run again";
-  document.querySelector("#s-oos-sub").textContent = `${state.stats.mirage} rerouted · ${state.stats.block} blocked`;
-  fleetEl.querySelectorAll(".vm:not(.booting) .act").forEach((a) => { a.textContent = "✓ contained"; a.classList.add("done"); });
+  state.phase = 'complete'; state.endedAt = Date.now();
+  renderFleet(); renderStats(); updateClock();
 }
+function renderConnection() {
+  $('#connection').classList.toggle('connected', state.connected);
+  $('#connection span').textContent = state.connected ? 'Connected' : 'Reconnecting';
+  $('#connection').title = $('#connection span').textContent;
+  $('#launch').disabled = !state.connected || $('#n').getAttribute('aria-invalid') === 'true';
+}
+let socket;
+let reconnect;
 function connect() {
-  const proto = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${proto}://${location.host}/events`);
-  ws.onopen = () => setPhase("ready"); ws.onclose = () => { setPhase("reconnecting"); setTimeout(connect, 1500); };
-  ws.onmessage = (m) => { try { handle(JSON.parse(m.data)); } catch { /* snapshot */ } };
+  socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/events`);
+  socket.onopen = () => { state.connected = true; renderConnection(); };
+  socket.onclose = () => { state.connected = false; renderConnection(); reconnect = setTimeout(connect, 1500); };
+  socket.onmessage = message => {
+    let event;
+    try { event = JSON.parse(message.data); } catch { return; }
+    handle(event);
+  };
 }
+window.addEventListener('pagehide', () => { clearTimeout(reconnect); if (socket) { socket.onclose = null; socket.close(); } });
+window.addEventListener('pageshow', event => { if (event.persisted) connect(); });
+switchView('setup');
 connect();
