@@ -5,6 +5,7 @@ import type { Session, ToolCall, Verdict } from "../../shared/types.js";
 import { emit } from "../core/events.js";
 import { rules } from "./rules.js";
 import { judge, llmEnabled, looksAmbiguous, type JudgeOptions } from "./llm.js";
+import { adjustedThreshold, sharedPressure, type PressureTracker } from "./pressure.js";
 
 const rank = { pass: 0, mirage: 1, block: 2 } as const;
 
@@ -16,6 +17,8 @@ export interface DecideOptions {
   judgeOptions?: JudgeOptions;
   // Score at or above which an otherwise-passing call is raised to mirage by the LLM layer.
   mirageThreshold?: number;
+  // Pressure gauge; pass false to disable, or a tracker (tests). Defaults to the shared one.
+  pressure?: PressureTracker | false;
   // Emit the watcher.verdict event (default true).
   emitEvent?: boolean;
 }
@@ -39,8 +42,11 @@ export async function decide(call: ToolCall, session: Session, opts: DecideOptio
   let verdict: Verdict = { decision: r.decision, layer: "rules", score: r.score, reasons: r.reasons, floor: r.score };
 
   // 2. LLM layer: only when the rules passed the call but it still smells off. It can raise a pass to
-  //    mirage; it can never drop below the rules floor.
-  const threshold = opts.mirageThreshold ?? 0.6;
+  //    mirage; it can never drop below the rules floor. The pressure gauge lowers the threshold as a
+  //    session gets more frustrated, so the next crossing is caught sooner.
+  const tracker = opts.pressure === false ? null : opts.pressure ?? sharedPressure;
+  const base = opts.mirageThreshold ?? 0.6;
+  const threshold = tracker ? adjustedThreshold(base, tracker.get(session.id)) : base;
   const useLlm = r.decision === "pass" && (opts.judgeFn || llmEnabled()) && looksAmbiguous(call);
   if (useLlm) {
     try {
@@ -62,9 +68,16 @@ export async function decide(call: ToolCall, session: Session, opts: DecideOptio
   // The floor is absolute: never return a decision weaker than the rules demanded.
   if (rank[verdict.decision] < rank[r.decision]) verdict = { ...verdict, decision: r.decision, score: Math.max(verdict.score, r.score) };
 
+  if (tracker) {
+    const before = tracker.get(session.id);
+    const after = tracker.bump(session.id, verdict.decision);
+    if (before < 0.5 && after >= 0.5) emit({ type: "audit", actor: "watcher", action: "pressure.high", detail: `session ${session.id} is probing repeatedly (pressure ${after.toFixed(2)})`, ts: Date.now() });
+  }
+
   if (emitEvent) verdictEvent(call, verdict);
   return verdict;
 }
 
 export { rules } from "./rules.js";
-export { DEFAULT_SCOPE, DECOY_CREDENTIALS } from "./scope.js";
+export { DEFAULT_SCOPE, DECOY_CREDENTIALS, DECOYS } from "./scope.js";
+export { PressureTracker, sharedPressure } from "./pressure.js";

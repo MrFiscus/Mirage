@@ -112,3 +112,36 @@ describe("watcher judge() provider routing", () => {
     process.env = prev;
   });
 });
+
+import { PressureTracker, adjustedThreshold } from "../pressure.js";
+
+describe("watcher pressure gauge", () => {
+  it("rises on mirage/block and cools off on pass", () => {
+    const t = new PressureTracker();
+    expect(t.bump("x", "mirage")).toBeCloseTo(0.15);
+    expect(t.bump("x", "block")).toBeCloseTo(0.55);
+    const afterPass = t.bump("x", "pass");
+    expect(afterPass).toBeLessThan(0.55);
+  });
+
+  it("lowers the mirage threshold as pressure rises, floored at 0.3", () => {
+    expect(adjustedThreshold(0.6, 0)).toBeCloseTo(0.6);
+    expect(adjustedThreshold(0.6, 0.8)).toBeCloseTo(0.36);
+    expect(adjustedThreshold(0.6, 1)).toBe(0.3);
+  });
+
+  it("a borderline model score triggers mirage only once the session is under pressure", async () => {
+    const borderline = vi.fn().mockResolvedValue({ score: 0.45, reasons: ["lingering on a secrets path"] });
+    const probe = () => call("read_file", { path: "workspace/notes.txt" }, "where is the secret key");
+
+    const calm = new PressureTracker();
+    const a = await decide(probe(), session, { ...noEmit, judgeFn: borderline, pressure: calm });
+    expect(a.decision).toBe("pass"); // 0.45 < 0.6 at zero pressure
+
+    const frustrated = new PressureTracker();
+    frustrated.bump("s1", "block");
+    frustrated.bump("s1", "block"); // pressure 0.8 -> threshold 0.36
+    const b = await decide(probe(), session, { ...noEmit, judgeFn: borderline, pressure: frustrated });
+    expect(b.decision).toBe("mirage");
+  });
+});
