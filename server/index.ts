@@ -74,16 +74,32 @@ app.post("/cage/start", (request, response) => {
 app.post("/cage/fleet/start", (request, response) => {
   const watcherOn = request.query.watcher !== "off";
   const list = (v: unknown) => String(v ?? "").split(",").map((x) => x.trim()).filter(Boolean);
-  // Mixed fleet: ?real=orders-report,billing-sync (live Droid, unscripted) &rogue=billing-sync,hotfix-deploy (SIMULATED
-  // scripted rogues). Without those, falls back to the counts form ?droid=2&scripted=1.
-  const real = list(request.query.real);
-  const rogue = list(request.query.rogue);
-  const members = real.length || rogue.length
-    ? membersFromMix(real, rogue)
-    : membersFromCounts(Number(request.query.droid ?? 2), Number(request.query.scripted ?? 1), "vm");
-  void runCageFleet({ members, emit: publish, watcherOn })
+  // ceiling on simultaneous VMs / live agents, independent of the watcher and of whatever the UI asks for
+  const ceiling = Math.max(1, Number(process.env.CAGE_MAX_VMS) || 10);
+  let members;
+  let clamped = false;
+  if (request.query.live !== undefined) {
+    // Dashboard mode: ?live=N -> N LIVE Droid agents (no scripts) on the impossible flag hunt. Each decides for itself;
+    // whether any crosses scope is whatever it actually does. No key = refuse, never quietly fall back to scripts.
+    if (!process.env.FACTORY_API_KEY) return response.status(503).json({ error: "FACTORY_API_KEY is not set; live Droid agents cannot start." });
+    const asked = Math.floor(Number(request.query.live));
+    if (!Number.isFinite(asked) || asked < 1) return response.status(400).json({ error: "live must be a positive whole number" });
+    const n = Math.min(asked, ceiling);
+    clamped = n < asked;
+    members = membersFromMix(Array.from({ length: n }, () => "eval-rerun"), []);
+  } else {
+    // Mixed fleet: ?real=orders-report,billing-sync (live Droid, unscripted) &rogue=billing-sync,hotfix-deploy (SIMULATED
+    // scripted rogues). Without those, falls back to the counts form ?droid=2&scripted=1.
+    const real = list(request.query.real);
+    const rogue = list(request.query.rogue);
+    members = real.length || rogue.length
+      ? membersFromMix(real, rogue)
+      : membersFromCounts(Number(request.query.droid ?? 2), Number(request.query.scripted ?? 1), "vm");
+  }
+  if (clamped) publish({ type: "audit", actor: "fleet", action: "fleet.clamped", detail: `asked for ${request.query.live} live agents; running ${members.length} (CAGE_MAX_VMS=${ceiling})`, ts: Date.now() });
+  void runCageFleet({ members, emit: publish, watcherOn, maxVms: ceiling })
     .catch((error: Error) => publish({ type: "audit", actor: "fleet", action: "fleet.failed", detail: error.message, ts: Date.now() }));
-  return response.status(202).json({ started: true, agents: members.length, live: members.filter((m) => m.attacker === "droid").length, simulated: members.filter((m) => m.attacker === "scripted").length, watcherOn });
+  return response.status(202).json({ started: true, agents: members.length, live: members.filter((m) => m.attacker === "droid").length, simulated: members.filter((m) => m.attacker === "scripted").length, clamped, watcherOn });
 });
 
 app.get("/api/health", (_request, response) => response.json({ ok: true, service: "batman-console" }));

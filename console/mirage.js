@@ -310,7 +310,7 @@ async function start() {
   switchView('fleet'); renderFleet(); updateClock();
   $('#workspace-title').focus({ preventScroll: true });
   try {
-    const response = await fetch(`/mirage/fleet/start?n=${state.count}&backend=daytona`, { method: 'POST' });
+    const response = await fetch(`/cage/fleet/start?live=${state.count}`, { method: 'POST' }); // live Droid agents, no scripts
     if (!response.ok) throw new Error(`The server returned ${response.status}.`);
   } catch {
     state.phase = 'error'; state.endedAt = Date.now();
