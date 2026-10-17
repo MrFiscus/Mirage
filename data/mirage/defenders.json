@@ -1,0 +1,16 @@
+[
+  {
+    "name": "Jordan Bell",
+    "role": "analyst",
+    "department": "Security Operations",
+    "phone": "+15550001002",
+    "onCall": true
+  },
+  {
+    "name": "Maya Chen",
+    "role": "ceo",
+    "department": "Executive",
+    "phone": "+15550001001",
+    "onCall": false
+  }
+]
