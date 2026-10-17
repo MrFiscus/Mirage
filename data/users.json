@@ -2,5 +2,6 @@
   { "phone": "+15550001001", "name": "Maya Chen", "role": "ceo", "department": "Executive" },
   { "phone": "+15550001002", "name": "Jordan Bell", "role": "analyst", "department": "Security Operations" },
   { "phone": "+15550001003", "name": "Priya Shah", "role": "hr", "department": "People" },
-  { "phone": "+15550001004", "name": "Leo Martins", "role": "developer", "department": "Engineering" }
+  { "phone": "+15550001004", "name": "Leo Martins", "role": "developer", "department": "Engineering" },
+  { "phone": "+17814756319", "name": "Batman Test Analyst", "role": "analyst", "department": "Security Operations" }
 ]
