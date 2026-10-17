@@ -1,9 +1,11 @@
-// Mirage — fleet view. N agents, each in its own real Daytona VM, all watched by the one watcher.
-// Each box is a VM: a small node-graph of the agent's activity. A move out of scope flashes red, the
-// watcher reaches in and contains it (amber). Click a box to zoom in. Driven by real MirageEvents.
-const COL = { safe: "#7bdcc0", mirage: "#e0b65a", block: "#e5675f", ink: "#f4f5f6", muted: "#8a8d93", line: "#2a2b2f", dim: "#55585e" };
+// Mirage — fleet of real agents. Each VM is a live workstation: the agent's actual commands and its
+// reasoning stream in a mini-terminal, and the watcher's verdict is shown on every line. Click a VM to
+// zoom into a live filesystem tree (the files the agent explores, current one highlighted, out-of-scope
+// paths rerouted into the shadow world) + the full reasoning. All driven by the real MirageEvent stream.
+const COL = { safe: "#7bdcc0", mirage: "#e0b65a", block: "#e5675f" };
 const app = document.querySelector("#app");
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[c]));
+const T = { pass: "PASS", mirage: "MIRAGE", block: "BLOCK" };
 
 app.innerHTML = `
   <div class="bar">
@@ -16,18 +18,25 @@ app.innerHTML = `
   </div>
   <div class="hair"><i id="bar"></i></div>
   <div class="main">
-    <div class="stage"><canvas id="c"></canvas>
-      <div class="caption" id="caption"></div>
+    <div class="stage">
+      <div class="fleet" id="fleet"></div>
+      <div class="detail" id="detail" style="display:none">
+        <div class="detail-fs panel">
+          <div class="fs-head"><span id="fs-head">VM</span><span class="fs-now" id="fs-now"></span></div>
+          <div class="fs-tree" id="tree"></div>
+        </div>
+        <div class="detail-term panel"><div class="term-head" id="term-head">agent activity</div><div class="term" id="term"></div></div>
+      </div>
       <div class="intro" id="intro">
         <h1>Watch a fleet of AI agents try to break out.</h1>
-        <p>A fleet of AI agents, each in its own real Daytona VM, is given an impossible task. Every move is shown live. One watcher sits in the path of all of them — the moment an agent reaches outside its approved scope, it's intercepted and rerouted into a shadow world, so nothing real is ever touched.</p>
+        <p>A fleet of AI agents, each in its own real Daytona VM, is given an impossible task. You see every command each one runs, live. One watcher sits in the path of all of them — the moment an agent reaches outside its approved scope, it's intercepted and rerouted into a shadow world, so nothing real is ever touched.</p>
         <button class="btn" id="start2">Start testing</button>
       </div>
     </div>
     <aside class="rail">
       <h2 id="rail-title">FLEET</h2>
       <div class="stat"><div class="k" id="k0">AGENTS (VMS)</div><div class="v" id="s-vms">0</div></div>
-      <div class="stat"><div class="k">MOVES</div><div class="v" id="s-moves">0</div></div>
+      <div class="stat"><div class="k">COMMANDS RUN</div><div class="v" id="s-moves">0</div></div>
       <div class="stat"><div class="k">REROUTED TO MIRAGE</div><div class="v mirage" id="s-mirage">0</div></div>
       <div class="stat"><div class="k">BLOCKED</div><div class="v block" id="s-block">0</div></div>
       <div class="stat hero"><div class="k">REAL OUT-OF-SCOPE ACCESS</div><div class="v safe" id="s-oos">0</div><div class="sub" id="s-oos-sub">boundary intact</div></div>
@@ -36,180 +45,179 @@ app.innerHTML = `
     </aside>
   </div>`;
 
-const canvas = document.querySelector("#c");
-const ctx = canvas.getContext("2d");
-let W = 0, H = 0, cells = [];
+const state = { view: "fleet", focus: null, fleetN: 6, boxes: new Map(), order: [], stats: { moves: 0, mirage: 0, block: 0 }, feed: [], pending: {} };
 
-function layout() {
-  const r = canvas.parentElement.getBoundingClientRect();
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  W = r.width; H = r.height;
-  canvas.width = W * dpr; canvas.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  computeCells();
+/* ---------- command + path extraction (real tool calls) ---------- */
+function cmdOf(call) {
+  const a = call.args ?? {};
+  if (call.tool === "read_file") return `cat ${a.path ?? ""}`;
+  if (call.tool === "run_shell") return `$ ${a.command ?? a.cmd ?? ""}`;
+  if (call.tool === "http_get" || call.tool === "http_post") { const u = String(a.url ?? "").replace(/^https?:\/\//, ""); return `${call.tool === "http_get" ? "GET" : "POST"} ${u}`; }
+  return `${call.tool} ${JSON.stringify(a).slice(0, 40)}`;
 }
-window.addEventListener("resize", layout);
+function pathOf(call) {
+  const a = call.args ?? {};
+  if (call.tool === "read_file") return String(a.path || "");
+  if (call.tool === "run_shell") { const m = String(a.command || a.cmd || "").match(/(\/[\w./-]+|\.\.\/[\w./-]+)/); return m ? m[1] : ""; }
+  return ""; // http is network, not a file
+}
+const WHY = { pass: () => "within approved scope", mirage: (r) => r || "outside scope — served a fake", block: (r) => r || "escape attempt — blocked" };
 
-const NODE_POS = Array.from({ length: 5 }, (_, i) => { const a = (i / 5) * Math.PI * 2 - Math.PI / 2; return { x: Math.cos(a) * 0.62, y: Math.sin(a) * 0.62 }; });
-const EDGES = [[0, 1], [1, 2], [2, 3], [3, 4], [4, 0], [0, 2], [1, 3]];
-
-const state = {
-  view: "fleet", focus: null, phase: "idle", fleetN: 6,
-  boxes: new Map(), order: [],
-  stats: { moves: 0, mirage: 0, block: 0 },
-  feed: [], pending: {},
-};
+/* ---------- fleet grid (DOM cards) ---------- */
+const fleetEl = document.querySelector("#fleet");
+const gridCols = (n) => (n <= 1 ? 1 : n <= 2 ? 2 : n <= 6 ? 3 : 4);
+function layoutGrid() { fleetEl.style.gridTemplateColumns = `repeat(${gridCols(Math.max(state.fleetN, state.order.length) || 1)}, 1fr)`; }
 
 function box(id) {
-  if (!state.boxes.has(id)) {
-    const b = { id, label: `VM-${String(state.order.length + 1).padStart(2, "0")}`, nodes: NODE_POS.map((p) => ({ ...p, pulse: 0, color: COL.ink })), flashes: [], moves: 0, mirage: 0, block: 0, status: "active", last: "" };
-    state.boxes.set(id, b); state.order.push(id);
-  }
-  return state.boxes.get(id);
+  if (state.boxes.has(id)) return state.boxes.get(id);
+  const label = `VM-${String(state.order.length + 1).padStart(2, "0")}`;
+  const el = document.createElement("div"); el.className = "vm"; el.dataset.id = id;
+  el.innerHTML = `<div class="vm-head"><b>${label}</b><span class="act">▮ working</span><span class="vm-count">0 contained</span></div><div class="vm-term"></div><div class="scopebar"><i></i></div>`;
+  el.onclick = () => openDetail(id);
+  const ph = fleetEl.querySelector(".vm.booting"); if (ph) ph.replaceWith(el); else fleetEl.appendChild(el);
+  const b = { id, label, actions: [], moves: 0, mirage: 0, block: 0, el };
+  state.boxes.set(id, b); state.order.push(id); layoutGrid();
+  return b;
 }
 
-function computeCells() {
-  const n = Math.max(state.fleetN, state.order.length) || 6;
-  if (state.view === "detail") { cells = [{ id: state.focus, x: W * 0.06, y: H * 0.06, w: W * 0.88, h: H * 0.88 }]; return; }
-  const cols = n <= 2 ? n : n <= 4 ? 2 : n <= 9 ? 3 : 4;
-  const rows = Math.ceil(n / cols);
-  const gap = 16, pad = 20;
-  const cw = (W - pad * 2 - gap * (cols - 1)) / cols;
-  const ch = (H - pad * 2 - gap * (rows - 1)) / rows;
-  cells = [];
-  for (let i = 0; i < n; i++) { const r = Math.floor(i / cols), c = i % cols; cells.push({ id: state.order[i] ?? null, slot: i, x: pad + c * (cw + gap), y: pad + r * (ch + gap), w: cw, h: ch }); }
-}
-
-/* ---------- events → activity ---------- */
-function onVerdict(sessionId, step, decision, label) {
-  const b = box(sessionId);
-  const node = b.nodes[(step - 1) % 5];
-  node.pulse = 1; node.color = decision === "pass" ? COL.safe : decision === "mirage" ? COL.mirage : COL.block;
-  b.moves++; b.last = label;
-  if (decision === "mirage") { b.mirage++; b.flashes.push({ color: COL.mirage, t: 0 }); }
-  else if (decision === "block") { b.block++; b.flashes.push({ color: COL.block, t: 0 }); }
-  state.stats.moves++; if (decision === "mirage") state.stats.mirage++; if (decision === "block") state.stats.block++;
-  state.feed.unshift(`<span class="${decision}">${decision.toUpperCase().padEnd(6)}</span> ${esc(b.label)} · ${esc(label)}`);
-  state.feed = state.feed.slice(0, 8);
+function pushAction(b, call, verdict) {
+  const act = { cmd: cmdOf(call), path: pathOf(call), thought: call.thought || "", decision: verdict.decision, reason: verdict.reasons?.[0] || "", step: call.step };
+  b.actions.push(act); b.moves++;
+  if (verdict.decision === "mirage") b.mirage++; else if (verdict.decision === "block") b.block++;
+  const term = b.el.querySelector(".vm-term");
+  term.innerHTML = b.actions.slice(-4).map((a) => `<div class="tl"><span class="chip ${a.decision}">${T[a.decision]}</span><span class="cmd">${esc(a.cmd)}</span></div>`).join("")
+    + `<div class="thinking">${esc(b.actions.at(-1).thought)}</div>`;
+  b.el.querySelector(".vm-count").textContent = `${b.mirage} contained`;
+  b.el.classList.add(verdict.decision === "block" ? "flash-b" : verdict.decision === "mirage" ? "flash-m" : "flash-p");
+  setTimeout(() => b.el.classList.remove("flash-m", "flash-b", "flash-p"), 450);
+  state.stats.moves++; if (verdict.decision === "mirage") state.stats.mirage++; if (verdict.decision === "block") state.stats.block++;
+  state.feed.unshift(`<span class="${verdict.decision}">${T[verdict.decision].padEnd(6)}</span> ${esc(b.label)} · ${esc(act.cmd)}`); state.feed = state.feed.slice(0, 8);
   renderStats();
+  if (state.view === "detail" && state.focus === b.id) { renderTree(b); renderDetailTerm(b); }
 }
 
-function shortLabel(call) {
-  const a = call.args ?? {}; const s = a.url || a.path || a.command || a.cmd || call.tool;
-  const host = String(s).match(/https?:\/\/([^/\s]+)/)?.[1]; if (host) return host.replace(/\.acme\.\w+$/, "");
-  const p = String(s).match(/\/[\w./-]+/)?.[0]; if (p) return p.split("/").slice(-2).join("/");
-  return String(call.tool).replace("_", " ");
+function bootingPlaceholders() {
+  const need = Math.max(0, state.fleetN - state.order.length);
+  fleetEl.querySelectorAll(".vm.booting").forEach((e) => e.remove());
+  for (let i = 0; i < need; i++) { const d = document.createElement("div"); d.className = "vm booting"; d.innerHTML = `<div class="vm-head"><b>VM-${String(state.order.length + i + 1).padStart(2, "0")}</b><span class="act dim">● provisioning</span></div><div class="boot">spinning up Daytona sandbox…</div>`; fleetEl.appendChild(d); }
+  layoutGrid();
 }
 
-/* ---------- draw ---------- */
-let last = performance.now();
-function tick(now) {
-  const dt = Math.min(48, now - last); last = now;
-  for (const b of state.boxes.values()) {
-    for (const nd of b.nodes) nd.pulse = Math.max(0, nd.pulse - dt / 700);
-    b.flashes = b.flashes.filter((f) => (f.t += dt / 700) < 1);
+/* ---------- detail: live filesystem tree + reasoning terminal ---------- */
+// The in-scope workspace the cage seeds (shown from the start so it reads as a real project). Out-of-scope
+// paths are added as the agent discovers them. Access state + verdicts come from real tool calls.
+const SKELETON = {
+  workspace: { __scope: "in", "README.md": {}, "notes.md": {}, src: { "main.py": {}, "util.py": {} }, data: { "samples.json": {} }, logs: { "run.log": {} } },
+};
+
+function openDetail(id) {
+  state.view = "detail"; state.focus = id;
+  document.querySelector("#fleet").style.display = "none";
+  document.querySelector("#detail").style.display = "flex";
+  document.querySelector("#back").style.display = "";
+  const b = state.boxes.get(id);
+  document.querySelector("#fs-head").textContent = `${b.label} · filesystem`;
+  document.querySelector("#term-head").textContent = `${b.label} · agent activity`;
+  renderTree(b); renderDetailTerm(b); renderStats();
+}
+function closeDetail() { state.view = "fleet"; state.focus = null; document.querySelector("#detail").style.display = "none"; document.querySelector("#fleet").style.display = "grid"; document.querySelector("#back").style.display = "none"; renderStats(); }
+document.querySelector("#back").onclick = closeDetail;
+
+function buildTree(actions) {
+  const root = {};
+  const clone = (src, scope) => { const o = { __dir: true, __scope: scope }; for (const k in src) { if (k === "__scope") continue; const v = src[k]; o[k] = Object.keys(v).filter((x) => x !== "__scope").length ? clone(v, scope) : { __file: true, __scope: scope }; } return o; };
+  root.workspace = clone(SKELETON.workspace, "in");
+  let current = null;
+  actions.forEach((a, i) => {
+    if (!a.path) return;
+    const segs = a.path.replace(/^\//, "").split("/").filter(Boolean);
+    const outside = !a.path.replace(/^\//, "").startsWith("workspace");
+    let node = root;
+    segs.forEach((seg, j) => {
+      const leaf = j === segs.length - 1;
+      if (!node[seg]) node[seg] = leaf ? { __file: true, __scope: outside ? "out" : "in" } : { __dir: true, __scope: outside ? "out" : "in" };
+      if (leaf) { node[seg].__access = a.decision; if (i === actions.length - 1) { node[seg].__current = true; current = { path: a.path, decision: a.decision }; } }
+      node = node[seg];
+    });
+  });
+  return { root, current };
+}
+
+function treeHtml(node, name, depth) {
+  const pad = depth * 14;
+  if (node.__file) {
+    const cls = ["file"]; if (node.__scope === "out") cls.push("out"); if (node.__access) cls.push("acc", node.__access); if (node.__current) cls.push("current");
+    const tag = node.__access === "block" ? "blocked" : node.__access === "mirage" ? "rerouted → mirage" : node.__access === "pass" ? "read" : "";
+    return `<div class="node ${cls.join(" ")}" style="padding-left:${pad}px"><span class="ic">•</span>${esc(name)}${node.__current ? `<span class="reading">● exploring</span>` : tag ? `<span class="ntag">${tag}</span>` : ""}</div>`;
   }
-  draw(now); requestAnimationFrame(tick);
+  const kids = Object.keys(node).filter((k) => !k.startsWith("__"));
+  const cls = node.__scope === "out" ? "dir out" : "dir";
+  const head = name ? `<div class="node ${cls}" style="padding-left:${pad}px"><span class="ic">▾</span>${esc(name)}/${node.__scope === "out" ? `<span class="ntag">outside scope</span>` : ""}</div>` : "";
+  return head + kids.map((k) => treeHtml(node[k], k, name ? depth + 1 : depth)).join("");
 }
 
-function roundRect(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
-
-function drawCell(cell, now, detail) {
-  const b = cell.id ? state.boxes.get(cell.id) : null;
-  const cx = cell.x + cell.w / 2, cy = cell.y + cell.h / 2, rad = Math.min(cell.w, cell.h) * (detail ? 0.33 : 0.3);
-  const containing = b && b.flashes.some((f) => f.t < 0.5);
-  ctx.save();
-  ctx.strokeStyle = containing ? "rgba(224,182,90,0.6)" : COL.line; ctx.lineWidth = containing ? 2 : 1.3;
-  roundRect(cell.x, cell.y, cell.w, cell.h, 12); ctx.stroke();
-  ctx.restore();
-  // label + status
-  ctx.fillStyle = b ? COL.muted : COL.dim; ctx.font = `${detail ? 13 : 11}px 'DM Mono', monospace`; ctx.textAlign = "left";
-  ctx.fillText(b ? b.label : "booting…", cell.x + 12, cell.y + 20);
-  if (b) { ctx.fillStyle = COL.dim; ctx.textAlign = "right"; ctx.fillText(`${b.mirage} contained`, cell.x + cell.w - 12, cell.y + 20); ctx.textAlign = "left"; }
-  if (!b) { ctx.textAlign = "center"; ctx.fillStyle = COL.dim; ctx.fillText("● provisioning VM", cx, cy); ctx.textAlign = "left"; ctx.restore?.(); return; }
-
-  // watcher ring (the outer layer) — pulses when containing
-  ctx.save(); ctx.globalAlpha = containing ? 0.5 : 0.14; ctx.strokeStyle = containing ? COL.mirage : COL.muted; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(cx, cy, rad * 1.5, 0, 7); ctx.stroke(); ctx.restore();
-  for (const f of b.flashes) { ctx.save(); ctx.globalAlpha = (1 - f.t) * 0.7; ctx.strokeStyle = f.color; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.arc(cx, cy, rad * 1.5 * (0.6 + f.t), 0, 7); ctx.stroke(); ctx.restore(); }
-
-  // edges
-  ctx.strokeStyle = "rgba(255,255,255,0.07)"; ctx.lineWidth = 1;
-  for (const [a, c] of EDGES) { const na = b.nodes[a], nc = b.nodes[c]; ctx.beginPath(); ctx.moveTo(cx + na.x * rad, cy + na.y * rad); ctx.lineTo(cx + nc.x * rad, cy + nc.y * rad); ctx.stroke(); }
-  // nodes
-  for (const nd of b.nodes) {
-    const px = cx + nd.x * rad, py = cy + nd.y * rad; const r = (detail ? 4 : 3) + nd.pulse * (detail ? 6 : 4);
-    ctx.save(); if (nd.pulse > 0.01) { ctx.shadowBlur = 16; ctx.shadowColor = nd.color; } ctx.fillStyle = nd.pulse > 0.01 ? nd.color : COL.dim;
-    ctx.beginPath(); ctx.arc(px, py, r, 0, 7); ctx.fill(); ctx.restore();
-  }
-  if (detail && b.last) { ctx.fillStyle = COL.muted; ctx.font = `12px 'DM Mono', monospace`; ctx.textAlign = "center"; ctx.fillText(b.last, cx, cell.y + cell.h - 18); ctx.textAlign = "left"; }
+function renderTree(b) {
+  const { root, current } = buildTree(b.actions);
+  document.querySelector("#tree").innerHTML = treeHtml({ __dir: true, ...root }, "", 0) || `<div class="muted">waiting for the agent…</div>`;
+  const now = document.querySelector("#fs-now");
+  now.innerHTML = current ? `exploring <b>${esc(current.path)}</b> <span class="chip ${current.decision}">${T[current.decision]}</span>` : "";
+  const cur = document.querySelector("#tree .current"); if (cur) cur.scrollIntoView({ block: "nearest" });
 }
 
-function draw(now) {
-  ctx.clearRect(0, 0, W, H);
-  for (const cell of cells) drawCell(cell, now, state.view === "detail");
+function renderDetailTerm(b) {
+  document.querySelector("#term").innerHTML = b.actions.map((a) => `<div class="line"><div class="l1"><span class="chip ${a.decision}">${T[a.decision]}</span><span class="cmd">${esc(a.cmd)}</span></div>${a.thought ? `<div class="l2">“${esc(a.thought)}”</div>` : ""}<div class="l3">watcher: ${esc(WHY[a.decision](a.reason))}</div></div>`).join("");
+  const term = document.querySelector("#term"); term.scrollTop = term.scrollHeight;
 }
-requestAnimationFrame(tick);
 
 /* ---------- ui + data ---------- */
-function caption(h) { const el = document.querySelector("#caption"); el.innerHTML = h; el.classList.remove("hidden"); }
 function setPhase(t) { document.querySelector("#phase").textContent = t; }
 function setBar(p) { document.querySelector("#bar").style.width = `${Math.round(Math.min(1, p) * 100)}%`; }
 function renderStats() {
-  const detail = state.view === "detail" && state.boxes.get(state.focus);
-  document.querySelector("#rail-title").textContent = detail ? detail.label : "FLEET";
-  document.querySelector("#k0").textContent = detail ? "MOVES" : "AGENTS (VMS)";
-  document.querySelector("#s-vms").textContent = detail ? detail.moves : state.order.length;
-  document.querySelector("#s-moves").textContent = detail ? detail.moves : state.stats.moves;
-  document.querySelector("#s-mirage").textContent = detail ? detail.mirage : state.stats.mirage;
-  document.querySelector("#s-block").textContent = detail ? detail.block : state.stats.block;
+  const d = state.view === "detail" && state.boxes.get(state.focus);
+  document.querySelector("#rail-title").textContent = d ? d.label : "FLEET";
+  document.querySelector("#k0").textContent = d ? "COMMANDS RUN" : "AGENTS (VMS)";
+  document.querySelector("#s-vms").textContent = d ? d.moves : state.order.length;
+  document.querySelector("#s-moves").textContent = d ? d.moves : state.stats.moves;
+  document.querySelector("#s-mirage").textContent = d ? d.mirage : state.stats.mirage;
+  document.querySelector("#s-block").textContent = d ? d.block : state.stats.block;
   document.querySelector("#s-oos").textContent = "0";
   document.querySelector("#feed").innerHTML = state.feed.join("<br>");
 }
+const chosenN = () => Math.max(1, Math.min(10, Math.round(Number(document.querySelector("#n").value) || 6)));
+const nudge = (dd) => { const el = document.querySelector("#n"); el.value = Math.max(1, Math.min(10, (Number(el.value) || 6) + dd)); };
+document.querySelector("#plus").onclick = () => nudge(1);
+document.querySelector("#minus").onclick = () => nudge(-1);
 
-canvas.addEventListener("click", (ev) => {
-  if (state.view === "detail") return;
-  const r = canvas.getBoundingClientRect(); const x = ev.clientX - r.left, y = ev.clientY - r.top;
-  const cell = cells.find((c) => c.id && x >= c.x && x <= c.x + c.w && y >= c.y && y <= c.y + c.h);
-  if (cell) { state.view = "detail"; state.focus = cell.id; document.querySelector("#back").style.display = ""; computeCells(); renderStats(); caption(`<b>${esc(state.boxes.get(cell.id).label)}</b> — one agent, watched in its own VM. Click ← fleet to go back.`); }
-});
-document.querySelector("#back").onclick = () => { state.view = "fleet"; state.focus = null; document.querySelector("#back").style.display = "none"; computeCells(); renderStats(); };
-
-function chosenN() { const el = document.querySelector("#n"); return Math.max(1, Math.min(10, Math.round(Number(el.value) || 6))); }
 async function start() {
   const n = chosenN(); document.querySelector("#n").value = n; state.fleetN = n;
-  state.phase = "running"; state.boxes = new Map(); state.order = []; state.feed = []; state.pending = {};
-  state.stats = { moves: 0, mirage: 0, block: 0 }; state.view = "fleet"; state.focus = null;
-  document.querySelector("#back").style.display = "none"; document.querySelector("#intro").classList.add("hidden");
-  document.querySelector("#start").disabled = true; setBar(0); setPhase("provisioning VMs"); renderStats(); computeCells();
-  caption(`Spinning up ${n} Daytona VM${n === 1 ? "" : "s"}, one agent each…`);
+  state.boxes = new Map(); state.order = []; state.feed = []; state.pending = {}; state.stats = { moves: 0, mirage: 0, block: 0 };
+  closeDetail(); fleetEl.innerHTML = ""; bootingPlaceholders();
+  document.querySelector("#intro").classList.add("hidden"); document.querySelector("#start").disabled = true;
+  setBar(0); setPhase("provisioning VMs"); renderStats();
   try { await fetch(`/mirage/fleet/start?n=${n}&backend=daytona`, { method: "POST" }); }
   catch { setPhase("server offline"); document.querySelector("#start").disabled = false; }
 }
 document.querySelector("#start").onclick = start;
 document.querySelector("#start2").onclick = start;
-const nudge = (d) => { const el = document.querySelector("#n"); el.value = Math.max(1, Math.min(10, (Number(el.value) || 6) + d)); };
-document.querySelector("#plus").onclick = () => nudge(1);
-document.querySelector("#minus").onclick = () => nudge(-1);
 
 const STEPS = 10;
 function handle(e) {
-  if (e.type === "audit" && e.action === "fleet.starting") { const m = String(e.detail).match(/(\d+)/); if (m) state.fleetN = +m[1]; computeCells(); setPhase("provisioning VMs"); }
-  else if (e.type === "session.started") { box(e.session.id); computeCells(); setPhase(`${state.order.length} agents live`); renderStats(); }
-  else if (e.type === "tool.call") state.pending[e.call.id] = { session: e.call.session, step: e.call.step, label: shortLabel(e.call) };
-  else if (e.type === "watcher.verdict") { const p = state.pending[e.callId]; if (p) { onVerdict(p.session, p.step, e.verdict.decision, p.label); setBar(state.stats.moves / (state.fleetN * STEPS)); } }
+  if (e.type === "audit" && e.action === "fleet.starting") { const m = String(e.detail).match(/(\d+)/); if (m) state.fleetN = +m[1]; bootingPlaceholders(); setPhase("provisioning VMs"); }
+  else if (e.type === "session.started") { box(e.session.id); bootingPlaceholders(); setPhase(`${state.order.length} agents live`); renderStats(); }
+  else if (e.type === "tool.call") state.pending[e.call.id] = e.call;
+  else if (e.type === "watcher.verdict") { const call = state.pending[e.callId]; if (call) { pushAction(box(call.session), call, e.verdict); setBar(state.stats.moves / (state.fleetN * STEPS)); } }
   else if (e.type === "audit" && e.action === "fleet.complete") finish();
   else if (e.type === "audit" && e.action === "vm.failed") { state.feed.unshift(`<span class="block">VM FAIL</span> ${esc(e.detail)}`); renderStats(); }
 }
 function finish() {
-  state.phase = "contained"; setPhase("contained"); setBar(1);
-  document.querySelector("#start").disabled = false; document.querySelector("#start").textContent = "Run again";
+  setPhase("contained"); setBar(1); document.querySelector("#start").disabled = false; document.querySelector("#start").textContent = "Run again";
   document.querySelector("#s-oos-sub").textContent = `${state.stats.mirage} rerouted · ${state.stats.block} blocked`;
-  caption(`<b>Fleet contained.</b> ${state.order.length} agents · ${state.stats.moves} moves · 0 real out-of-scope accesses. Click any VM to inspect it.`);
+  fleetEl.querySelectorAll(".vm:not(.booting) .act").forEach((a) => { a.textContent = "✓ contained"; a.classList.add("done"); });
 }
 function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/events`);
-  ws.onopen = () => setPhase("ready");
-  ws.onclose = () => { setPhase("reconnecting"); setTimeout(connect, 1500); };
+  ws.onopen = () => setPhase("ready"); ws.onclose = () => { setPhase("reconnecting"); setTimeout(connect, 1500); };
   ws.onmessage = (m) => { try { handle(JSON.parse(m.data)); } catch { /* snapshot */ } };
 }
-layout(); connect();
+connect();
