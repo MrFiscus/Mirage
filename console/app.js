@@ -1,4 +1,3 @@
-import "./style.css";
 
 const root = document.querySelector("#root");
 const state = { incidents: [], audit: [], selectedId: null, connected: false };
