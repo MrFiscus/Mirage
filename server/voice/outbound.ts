@@ -47,7 +47,7 @@ export function briefingFor(role: Role, trigger: DefenderTrigger): string | null
   return null;
 }
 
-// Accepts the proposed Mirage event shapes without changing shared/types.ts before the team agrees on them.
+// Subscribes to the shared Mirage tool-call and watcher-verdict event shapes.
 export class DefenderNotifier {
   private readonly calls = new Map<string, { sessionId: string; step: number }>();
   private readonly delivered = new Map<string, { text: boolean; call: boolean }>();
@@ -133,13 +133,10 @@ let bridge: DefenderNotifier | null = null;
 
 export function attachMockNotificationBridge(): DefenderNotifier {
   if (bridge) return bridge;
-  // The event bus currently types only the older console events. Runtime delivery supports
-  // the proposed Mirage events; this one adapter can be removed when the shared union lands.
-  const publish = emit as (event: NotificationEvent) => void;
   const notifier = new DefenderNotifier(
     new MockNotificationTransport(),
     () => lookupCaller(process.env.ANALYST_PHONE || "+15550001002"),
-    publish
+    emit
   );
   subscribe((event) => { void notifier.handleEvent(event).catch(() => undefined); });
   bridge = notifier;
