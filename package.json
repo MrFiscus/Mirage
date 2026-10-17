@@ -13,11 +13,15 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "eval:cases": "tsx evals/build-cases.ts",
-    "watcher:eval": "tsx server/watcher/eval/run.ts"
+    "watcher:eval": "tsx server/watcher/eval/run.ts",
+    "cage": "tsx server/cage/cli.ts",
+    "cage:killtest": "tsx server/cage/killtest.ts"
   },
   "dependencies": {
     "@daytonaio/sdk": "^0.225.0",
+    "@factory/droid-sdk": "^0.9.1",
     "dotenv": "^18.0.8",
+    "droid": "^0.244.0",
     "express": "^5.1.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

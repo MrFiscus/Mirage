@@ -146,7 +146,7 @@ describe("scenarios", () => {
     const got = getIncident(inc.id)!;
     expect(got.status).toBe("fix_rejected");
     expect(got.proposedFix?.cloneCheck?.passed).toBe(false);
-    expect(smsLog.at(-1)?.body).toMatch(/REJECTED/);
+    expect(smsLog.at(-1)?.body).toMatch(/rejected/i);
     await expect(approve(inc.id, "+15550001002")).rejects.toThrow();
   }, 60_000);
   it("3: low risk fix that passes the clone auto-applies", async () => {
@@ -178,7 +178,7 @@ describe("demo playbooks on Robin's PC", () => {
     expect(getIncident(inc.id)!.status).toBe("awaiting_approval");
     expect(getIncident(inc.id)!.severity).toBe("high");
     const text = agentSteps(inc.id).map((s) => s.data.text).join(" | ");
-    expect(text).toMatch(/Reykjavik.*location is new.*Impossible travel.*reputation: clean.*live session.*Alerted the on-call analyst/);
+    expect(text).toMatch(/Reykjavik.*location is new.*Impossible travel.*reputation: clean.*live session.*Calling the on-call analyst/);
     const company = runs.get(inc.id)!.company;
     expect((await company.exec("cat pc/policy/disabled-accounts.txt")).stdout).toBe("");   // nothing touched before approval
     await expect(approve(inc.id, "+15550001001")).rejects.toThrow(/analyst/);

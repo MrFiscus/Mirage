@@ -6,3 +6,4 @@ data/runtime-state.json
 *.log
 !sim/app/logs/network.log
 data/mirage-ledger.jsonl
+data/cage-runs/
