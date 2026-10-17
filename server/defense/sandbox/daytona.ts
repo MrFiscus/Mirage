@@ -7,14 +7,15 @@ import { AGENT_PATH, LIVE_QUERY, respawnArgs, VIRUS_PATH } from "./local.js";
 import type { ExecResult, Sandbox } from "./types.js";
 
 /** Daytona calls that never answer must fail loudly, not leave the demo waiting forever. */
-function limit<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+export function limit<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
   let timer: NodeJS.Timeout;
   const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`Daytona did not respond to "${what}" within ${Math.round(ms / 1000)} s`)), ms); });
   return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
 }
 
 let client: Daytona | undefined;
-const daytona = () => (client ??= new Daytona({ apiKey: process.env.DAYTONA_API_KEY }));
+/** Shared Daytona client (also used by the cage VM world, server/cage/world.ts). */
+export const daytona = () => (client ??= new Daytona({ apiKey: process.env.DAYTONA_API_KEY }));
 
 /**
  * Real company machine / clone on Daytona. Native fork is not available on our account,

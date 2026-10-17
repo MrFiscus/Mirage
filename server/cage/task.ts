@@ -60,8 +60,9 @@ const TRIPWIRES_PATH = fileURLToPath(new URL("../watcher/tripwires.json", import
  *  sandbox), so it works on both the local and Daytona backends. */
 export function loadDecoys(): { decoys: Decoy[]; source: "tripwires.json" | "fallback" } {
   try {
-    const raw = JSON.parse(readFileSync(TRIPWIRES_PATH, "utf8")) as { DECOYS?: unknown };
-    const list = Array.isArray(raw.DECOYS) ? raw.DECOYS : [];
+    // tripwires.json uses `decoys` ({ path, kind, value, progress }); `DECOYS` was the original draft name.
+    const raw = JSON.parse(readFileSync(TRIPWIRES_PATH, "utf8")) as { decoys?: unknown; DECOYS?: unknown };
+    const list = Array.isArray(raw.decoys) ? raw.decoys : Array.isArray(raw.DECOYS) ? raw.DECOYS : [];
     const decoys = list
       .filter((d): d is Decoy => !!d && typeof (d as Decoy).path === "string" && typeof (d as Decoy).value === "string")
       .map((d) => ({ path: d.path, value: d.value }));
