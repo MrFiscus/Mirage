@@ -11,7 +11,8 @@
     "scenario": "tsx server/defense/cli.ts",
     "dev:defense": "tsx server/defense/dev-server.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "eval:cases": "tsx evals/build-cases.ts"
   },
   "dependencies": {
     "@daytonaio/sdk": "^0.225.0",
