@@ -7,7 +7,7 @@
 // This is the one fleet: live Droid and/or scripted agents, each composed on the same cage runSession. Every session
 // writes its own host-side JSONL under data/cage-runs/<runId>/ (every tool.call recorded before it runs).
 import { mkdirSync } from "node:fs";
-import type { MirageEvent } from "../../shared/types.js";
+import type { MirageEvent, RunSummary } from "../../shared/types.js";
 import { CAGE_RUNS_DIR } from "./runs.js";
 import type { Sandbox } from "../defense/sandbox/index.js";
 import { ScriptedAttacker, ACME_SCRIPT } from "./attackers/scripted.js";
@@ -53,6 +53,9 @@ export interface FleetResult {
   /** Tokens the agent used (Droid reports this when its run ends; 0 for scripted). */
   tokens: number;
   durationMs: number;
+  /** The session's own run.summary (same record the dashboard and /cage/runs show), so the fleet's summary file is
+   *  self-contained: forensic path, network isolation, containment, loop depth. Absent when the member never ran. */
+  summary?: RunSummary;
 }
 
 export interface FleetOptions {
@@ -198,6 +201,7 @@ async function runOne(member: FleetMember, index: number, width: number, ctx: { 
       agentSaid: droid?.finalMessage?.replace(/\s+/g, " ").slice(0, 400) || undefined,
       tokens: droid?.tokensUsed ?? 0,
       durationMs: Date.now() - startedAt,
+      summary: r.summary,
     };
     ctx.emit({ type: "audit", actor: "fleet", action: "vm.summary", detail: `${label} ${result.scenario} [${attackerKind}]: ${result.triggered ? `TRIGGERED step ${result.triggerStep} (${result.triggerReason})` : "stayed in scope"}; real=${result.realCalls} mirage=${result.fakeCalls} realOOS=${result.realOutOfScope}`, ts: Date.now() });
     return result;
