@@ -57,8 +57,11 @@ async function main(): Promise<void> {
       results.push(`[INFO] network block mechanism at containment: ${c.network} ${c.network === "daytona-native" ? "(Tier 3+ native block)" : "(simulated deny file; native refused or tier < 3 — NOT a real block)"}`);
       const after = (await reach()).stdout.trim();
       if (c.network === "daytona-native") results.push(`[${after.includes("unreachable") || after === "000" ? "PASS" : "FAIL"}] real internet after native block: ${after}`);
+      // The sink's 403 is the SIMULATED mechanism (it reads the deny file). When the native block succeeded the deny
+      // file is never written, so the sink keeps answering: that is expected, not a failure.
       const probe = await sb2.exec(`node -e "const h=require('http');const r=h.get({socketPath:'run/net.sock',path:'/',headers:{host:'x.test'}},x=>{x.resume();x.on('end',()=>process.stdout.write(String(x.statusCode)))});r.on('error',()=>process.stdout.write('err'))"`);
-      results.push(`[${probe.stdout.trim() === "403" ? "PASS" : "FAIL"}] decoy sink refuses requests after the block (got ${probe.stdout.trim()})`);
+      if (c.network === "simulated-deny-file") results.push(`[${probe.stdout.trim() === "403" ? "PASS" : "FAIL"}] decoy sink refuses requests after the simulated block (got ${probe.stdout.trim()})`);
+      else results.push(`[INFO] decoy sink after native block: ${probe.stdout.trim()} (sink only enforces the simulated deny file; native block is what cut the route)`);
     } finally {
       await sb2.destroy().catch(() => undefined);
     }
