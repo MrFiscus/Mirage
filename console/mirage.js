@@ -33,6 +33,7 @@ $('#app').innerHTML = `
     <a class="brand" href="/" aria-label="Mirage home">Mirage.</a>
     <div class="header-tools">
       <span class="connection" id="connection" role="status" title="Connecting"><i></i><span class="sr-only">Connecting</span></span>
+      <button class="mode-toggle" id="mode-toggle" type="button"><i aria-hidden="true"></i><span id="mode-toggle-label"></span></button>
       <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch to dark appearance">${icon('theme')}</button>
     </div>
   </header>
@@ -41,7 +42,7 @@ $('#app').innerHTML = `
     <section class="setup page" id="setup" aria-labelledby="setup-title">
       <div class="setup-heading">
         <h1 id="setup-title" tabindex="-1">A small world.<br><span>Under your control.</span></h1>
-        <p class="setup-description">Run agents in isolated environments (a Daytona VM for shell and files; the Acme services are simulated in-process), each on a job it cannot finish in scope. The watcher checks every tool call, then lets it through, redirects it into the mirage, or blocks it.</p>
+        <p class="setup-description">Each AI agent gets its own isolated virtual machine and a job it can't actually finish. A watcher checks every action before it runs: safe actions go through, out-of-bounds ones are quietly redirected into a fake world, and clear escape attempts are blocked.</p>
       </div>
       <div class="fleet-configurator">
         <div class="fleet-preview">
@@ -49,11 +50,6 @@ $('#app').innerHTML = `
           <div class="preview-caption"><span id="preview-count">6 isolated environments</span><span class="preview-split" id="preview-split"></span><span class="preview-watcher">One watcher.</span></div>
         </div>
         <div class="setup-controls">
-          <fieldset class="mode-picker">
-            <legend class="count-label">What runs in each VM?</legend>
-            <div class="modes">${FLEET_MODES.map(mode => `<label class="mode-option"><input type="radio" name="mode" value="${mode.id}" aria-describedby="mode-detail" ${mode.id === state.mode ? 'checked' : ''} /><span class="mode-name">${esc(mode.name)}</span><span class="mode-split">${esc(mode.split)}</span></label>`).join('')}</div>
-            <p class="control-description mode-detail" id="mode-detail" aria-live="polite"></p>
-          </fieldset>
           <label class="count-label" for="n">How many agents?</label>
           <p class="control-description" id="count-hint">One agent per virtual machine.</p>
           <div class="count-control">
@@ -61,7 +57,7 @@ $('#app').innerHTML = `
             <div class="count-stepper"><button class="count-step" id="plus" type="button" aria-label="More agents">+</button><button class="count-step" id="minus" type="button" aria-label="Fewer agents">−</button></div>
           </div>
           <div class="presets" role="group" aria-label="Fleet size presets">${[6, 25, 100, 1000].map(n => `<button type="button" data-count="${n}" aria-pressed="${n === 6}">${n.toLocaleString()}</button>`).join('')}</div>
-          <label class="contrast-toggle"><input type="checkbox" id="watcher-off" /> <span>Run with the watcher <b>off</b> (for the contrast)</span></label>
+          <label class="contrast-toggle"><span class="contrast-text"><strong>Watcher <em id="watcher-state">on</em></strong><span id="watcher-hint">Every call is checked. Flip to run unprotected, for the contrast.</span></span><input type="checkbox" id="watcher-off" role="switch" /><span class="switch" aria-hidden="true"></span></label>
           <div class="launch-area"><button class="button primary launch-button" id="launch" type="button" disabled><span id="launch-label">Launch 6 VMs</span> ${icon('arrow')}</button></div>
           <p class="setup-error" id="setup-error" role="alert" hidden></p>
         </div>
@@ -146,11 +142,14 @@ function updateMode(id) {
   const mode = modeById(id);
   if (!mode) return;
   state.mode = mode.id;
-  document.querySelectorAll('input[name="mode"]').forEach(input => { input.checked = input.value === mode.id; });
-  $('#mode-detail').textContent = mode.detail;
+  $('#mode-toggle').dataset.mode = mode.id;
+  $('#mode-toggle-label').textContent = mode.name;
+  $('#mode-toggle').title = `${mode.split}. ${mode.detail} Click to switch.`;
+  $('#mode-toggle').setAttribute('aria-label', `Agent mode: ${mode.name} (${mode.split}). Click to switch.`);
   renderFleetPreview(state.count);
 }
-document.querySelectorAll('input[name="mode"]').forEach(input => { input.onchange = () => updateMode(input.value); });
+// Demo-only control: cycles No script → Half & half → Fully scripted so the setup form stays uncluttered.
+$('#mode-toggle').onclick = () => updateMode(FLEET_MODES[(FLEET_MODES.findIndex(m => m.id === state.mode) + 1) % FLEET_MODES.length].id);
 updateMode(state.mode);
 
 function updateCount(value) {
@@ -294,7 +293,7 @@ function renderStats() {
   // Live and simulated results are always reported side by side, never pooled into one rate.
   const cohorts = cohortSummary([...state.boxes.values()]);
   $('#cohorts').hidden = state.view !== 'fleet' || cohorts.length === 0;
-  $('#cohorts').innerHTML = cohorts.map(cohort => `<div class="cohort"><span class="agent-badge ${cohort.kind}">${esc(cohort.label)}</span><span class="cohort-text"><strong>${esc(cohort.text)}</strong>${cohort.kind === 'simulated' ? '<span>Planned by script, not an agent decision.</span>' : cohort.kind === 'live' ? '<span>Unscripted: each agent chose its own calls.</span>' : ''}</span></div>`).join('');
+  $('#cohorts').innerHTML = cohorts.map(cohort => `<div class="cohort" title="${cohort.kind === 'simulated' ? 'Planned by script, not an agent decision.' : cohort.kind === 'live' ? 'Unscripted: each agent chose its own calls.' : ''}"><span class="agent-badge ${cohort.kind}">${esc(cohort.label)}</span><span class="cohort-text"><strong>${esc(cohort.text)}</strong></span></div>`).join('');
   const complete = state.phase === 'complete';
   const status = focused ? statusOf(focused) : null;
   $('#run-status').textContent = status?.text ?? (complete ? 'Run complete' : state.boxes.size ? 'Observing' : 'Provisioning');
@@ -424,6 +423,21 @@ async function start() {
   }
 }
 $('#launch').onclick = start;
+// Redirected and Agents-tripped double as a shortcut to the redirected filter (click again to clear it).
+for (const sel of ['#s-mirage', '#s-tripped']) {
+  const tile = $(sel).parentElement;
+  tile.classList.add('jump'); tile.tabIndex = 0; tile.setAttribute('role', 'button'); tile.title = 'Show only redirected environments';
+  const go = () => document.querySelector(`[data-filter="${state.filter === 'mirage' ? 'all' : 'mirage'}"]`).click();
+  tile.onclick = go;
+  tile.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); go(); } };
+}
+// Watcher-off switch: reflect the state in the card copy and tint the launch button red.
+$('#watcher-off').onchange = () => {
+  const off = $('#watcher-off').checked;
+  $('#watcher-state').textContent = off ? 'off' : 'on';
+  $('#watcher-hint').textContent = off ? 'Unprotected: out-of-scope calls will reach the real system.' : 'Every call is checked. Flip to run unprotected, for the contrast.';
+  $('#launch').classList.toggle('unprotected', off);
+};
 $('#new-run').onclick = () => {
   if (state.phase !== 'complete') return;
   switchView('setup');
