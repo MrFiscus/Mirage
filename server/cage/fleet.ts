@@ -62,6 +62,8 @@ export interface FleetResult {
 export interface FleetOptions {
   members: FleetMember[];
   emit: (e: MirageEvent) => void;
+  /** First display-name index for this fleet. Demo mode starts its scripted VM after the live fleet. */
+  labelOffset?: number;
   watcherOn?: boolean;
   caps?: Caps;
   /** How many agents run AT ONCE (e.g. Daytona's concurrent-VM limit). The total is unlimited. Default 10. */
@@ -128,7 +130,7 @@ export async function runCageFleet(opts: FleetOptions): Promise<FleetResult[]> {
   opts.emit({ type: "audit", actor: "fleet", action: "fleet.starting", detail: `${members.length} agents (${members.filter((m) => m.attacker === "droid").length} droid, ${members.filter((m) => m.attacker === "scripted").length} scripted), ${allAtOnce ? "all at once" : `${concurrency} at a time`}`, ts: Date.now() });
 
   await runPool(members, concurrency, async (member, i) => {
-    const r = await runOne(member, i, width, { emit: opts.emit, watcherOn, caps, logDir, mirageLatencyMs: opts.mirageLatencyMs });
+    const r = await runOne(member, i + (opts.labelOffset ?? 0), width, { emit: opts.emit, watcherOn, caps, logDir, mirageLatencyMs: opts.mirageLatencyMs });
     finished++;
     {
       results.push(r);

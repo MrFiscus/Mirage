@@ -58,7 +58,7 @@ function plainHeadline(action) {
   return `The agent ${attempt}. ${tail}`;
 }
 const pad = (number) => String(number).padStart(2, '0');
-const PAGE_SIZE = 24;
+const PAGE_SIZE = 25;
 const state = {
   view: 'setup', phase: 'idle', connected: false, count: 15, mode: 'demo',
   boxes: new Map(), pending: new Map(), seen: new Set(), feed: [], failures: [],

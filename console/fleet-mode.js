@@ -59,7 +59,7 @@ export function modeSplit(mode, n) {
 export function launchPaths(mode, n, watcherOff = false) {
   if (mode !== 'demo' || n <= 1) return [launchPath(mode, n, watcherOff)];
   const off = watcherOff ? '&watcher=off' : '';
-  return [`/cage/fleet/start?real=${Array.from({ length: n - 1 }, () => LIVE_SCENARIO).join(',')}${off}`, `/cage/fleet/start?rogue=${DEMO_ROGUE_SCENARIO}${off}`];
+  return [`/cage/fleet/start?real=${Array.from({ length: n - 1 }, () => LIVE_SCENARIO).join(',')}${off}`, `/cage/fleet/start?rogue=${DEMO_ROGUE_SCENARIO}&labelOffset=${n - 1}${off}`];
 }
 
 export function launchPath(mode, n, watcherOff = false) {

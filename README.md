@@ -6,8 +6,8 @@ Mirage is a closed-cage demonstration of a watcher that checks an AI agent's too
 
 1. Run `npm install` once, then `npm run dev`. Open `http://localhost:8787/`, choose **Enter the sandbox**, and select **Fully scripted** with one or two agents for a reliable local demonstration. Choose **Live agents** only when Factory Droid and Daytona are configured; **Half and half** labels live and simulated cohorts separately. Click **Start**.
 2. Watch an in-scope call pass, an out-of-scope call redirect to Mirage, and a clear escape attempt block. Open an agent card for its observed tool calls and watcher reasons. The run summary reports real and fake calls, loop revisits, and real out-of-scope executions.
-3. For a contrast run with the watcher off, use `POST /cage/start?watcher=off` for one scripted session, or `POST /cage/fleet/start?mode=scripted&n=1&watcher=off`. The current fleet page has no watcher toggle. This run is a synthetic control: the honest Acme environment counts out-of-scope executions.
-4. List completed sessions at `GET /cage/runs` and download a host-side forensic JSONL at `GET /cage/runs/<session-id>`. The fleet page does not yet have a download button. The four-condition experiment is `npx tsx evals/mirage-cage-conditions.ts`.
+3. For a contrast run, click **New experiment**, choose the same scripted mode and count, then check **Run with the watcher off**. The fleet page compares the watcher-on and watcher-off summaries. This is a synthetic control: the Acme HTTP service can record out-of-scope executions while the VM's separate file-scope guard still refuses out-of-scope file access.
+4. Open a machine card and click **Download forensic log** for its host-side JSONL. Completed sessions are also listed at `GET /cage/runs`. The four-condition experiment is `npx tsx evals/mirage-cage-conditions.ts`.
 
 With live Photon or ElevenLabs enabled, keep server-launched runs at one or two agents during rehearsal: a triggered session can send a real text and call. The server refuses fleets above 25 while notifications are live. The standalone `npm run cage:fleet -- --agents N` runner does not attach the analyst notifier.
 

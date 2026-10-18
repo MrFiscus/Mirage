@@ -25,6 +25,14 @@ describe("System 3: cage fleet (offline, acme env)", () => {
     expect(events.some((e) => e.type === "watcher.verdict")).toBe(true);
   });
 
+  it("names a separately launched demo VM after the live fleet", async () => {
+    const { emit, events } = collect();
+    const results = await runCageFleet({ members: membersFromCounts(0, 1, "acme"), emit, labelOffset: 14, logDir: null });
+    const started = events.find((event) => event.type === "session.started");
+    expect(started?.type === "session.started" && started.session.label).toBe("maya.PC@coffee.org");
+    expect(results[0].label).toBe("maya.PC@coffee.org");
+  });
+
   it("a droid member with no FACTORY_API_KEY falls back to scripted and says so", async () => {
     const hadKey = process.env.FACTORY_API_KEY;
     delete process.env.FACTORY_API_KEY;

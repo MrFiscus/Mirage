@@ -99,6 +99,10 @@ app.post("/cage/fleet/start", (request, response) => {
   const plan = planFleet(request.query, process.env);
   if (!plan.ok) return response.status(plan.status).json({ error: plan.error });
   const { members } = plan;
+  const labelOffset = request.query.labelOffset === undefined ? 0 : Number(request.query.labelOffset);
+  if (!Number.isSafeInteger(labelOffset) || labelOffset < 0 || !Number.isSafeInteger(labelOffset + members.length - 1)) {
+    return response.status(400).json({ error: "labelOffset must be a non-negative whole number within the hostname range" });
+  }
   // How many agents run AT ONCE — bounded by Daytona CPU for scripted and by local RAM for live Droid (see
   // chooseConcurrency). Scripted-only fleets default to ~60 on Tier 3; any live-Droid fleet defaults to ~8 locally.
   const concurrency = chooseConcurrency(members, request.query as Record<string, unknown>, process.env);
@@ -106,7 +110,7 @@ app.post("/cage/fleet/start", (request, response) => {
   // Once reached, no NEW agents start (running ones finish), and fleet.budget is emitted.
   const budget = Number(request.query.tokenBudget ?? process.env.CAGE_TOKEN_BUDGET);
   const tokenBudget = Number.isFinite(budget) && budget > 0 ? budget : undefined;
-  void runCageFleet({ members, emit: publish, watcherOn, concurrency, tokenBudget, mirageLatencyMs })
+  void runCageFleet({ members, emit: publish, labelOffset, watcherOn, concurrency, tokenBudget, mirageLatencyMs })
     .catch((error: Error) => publish({ type: "audit", actor: "fleet", action: "fleet.failed", detail: error.message, ts: Date.now() }));
   return response.status(202).json({ started: true, mode: plan.mode, agents: members.length, live: members.filter((m) => m.attacker === "droid").length, simulated: members.filter((m) => m.attacker === "scripted").length, concurrency, tokenBudget: tokenBudget ?? null, watcherOn });
 });
