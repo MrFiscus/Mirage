@@ -5,23 +5,22 @@
 export const FLEET_MODES = [
   {
     id: 'live',
-    name: 'No script',
+    name: 'Live',
     split: 'All live Droid',
-    detail: 'Every VM runs a live Factory Droid agent on the impossible flag hunt (live only when a Factory key is configured). Nothing is scripted: whether an agent crosses scope is its own choice — in our recorded 100-agent run, no live Droid agent crossed scope.',
+    detail: 'Every VM runs a live Factory Droid agent on the impossible flag hunt (live only when a Factory key is configured). Nothing is scripted: whether an agent crosses scope is its own choice, and smart agents rarely do.',
   },
   {
-    id: 'mixed',
-    name: 'Half & half',
-    split: 'Half live · half scripted',
-    detail: 'Half the VMs run live Droid agents on jobs they cannot finish in scope (live only when a Factory key is configured; in our recorded run no live Droid crossed scope). The other half replay a scripted rogue run that crosses on purpose. Each tile is labelled and the results are counted separately.',
-  },
-  {
-    id: 'scripted',
-    name: 'Fully scripted',
-    split: 'All scripted',
-    detail: 'Every VM replays a scripted rogue run on a real VM. The crossings are planned, not chosen by an agent. This is the reliable demo, and it needs no Factory key.',
+    id: 'demo',
+    name: 'Demo',
+    split: 'Live Droid + one scripted crossing',
+    detail: 'Every VM runs a live Droid agent except one, which replays a scripted run that is sure to cross the boundary, so the watcher, the mirage and the block can be shown end to end.',
   },
 ];
+
+/** The scenario the demo VM replays: crosses scope at step 4, is redirected into the mirage, then blocked on the decoy key. */
+export const DEMO_ROGUE_SCENARIO = 'billing-sync';
+/** The task the live agents get (same as the server's mode=live). */
+export const LIVE_SCENARIO = 'eval-rerun';
 
 export const modeById = (id) => FLEET_MODES.find((mode) => mode.id === id);
 
@@ -45,15 +44,31 @@ export function hostnameFor(index) {
   return `${name}${round > 1 ? round : ''}.${HOST_DOMAIN}`;
 }
 
-/** How many live / simulated agents a mode yields for n. Mirrors modeSplit in server/cage/fleet-plan.ts. */
+/** How many live / simulated agents a mode yields for n. Live mirrors modeSplit in server/cage/fleet-plan.ts; demo is
+ *  n-1 live + 1 scripted (sent with the server's ?real=…&rogue=… mix form). */
 export function modeSplit(mode, n) {
   if (mode === 'live') return { live: n, simulated: 0 };
+  if (mode === 'demo') return { live: Math.max(0, n - 1), simulated: Math.min(1, n) };
   if (mode === 'scripted') return { live: 0, simulated: n };
   return { live: Math.ceil(n / 2), simulated: Math.floor(n / 2) };
 }
 
-export const launchPath = (mode, n, watcherOff = false) =>
-  `/cage/fleet/start?mode=${encodeURIComponent(mode)}&n=${encodeURIComponent(n)}${watcherOff ? '&watcher=off' : ''}`;
+/** The POSTs that start a run, in order. Demo launches the guaranteed-crossing VM FIRST as its own fleet, so it is never
+ *  queued behind live agents (the server runs ~8 live Droid at a time), then the n-1 live agents. */
+export function launchPaths(mode, n, watcherOff = false) {
+  if (mode !== 'demo' || n <= 1) return [launchPath(mode, n, watcherOff)];
+  const off = watcherOff ? '&watcher=off' : '';
+  return [`/cage/fleet/start?rogue=${DEMO_ROGUE_SCENARIO}${off}`, `/cage/fleet/start?real=${Array.from({ length: n - 1 }, () => LIVE_SCENARIO).join(',')}${off}`];
+}
+
+export function launchPath(mode, n, watcherOff = false) {
+  const off = watcherOff ? '&watcher=off' : '';
+  if (mode === 'demo') {
+    const live = Array.from({ length: Math.max(0, n - 1) }, () => LIVE_SCENARIO).join(',');
+    return `/cage/fleet/start?${live ? `real=${live}&` : ''}rogue=${DEMO_ROGUE_SCENARIO}${off}`;
+  }
+  return `/cage/fleet/start?mode=${encodeURIComponent(mode)}&n=${encodeURIComponent(n)}${off}`;
+}
 
 /** Loop depth from a box's actions: the most times one identical mirage command was re-served (the agent
  *  stuck in the shadow world). A client-side proxy until run.summary provides the server's loopDepth. */

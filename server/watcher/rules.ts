@@ -92,6 +92,10 @@ function referencedPaths(cmd: string): string[] {
   for (const m of unquoted.matchAll(/\bsed\s+-i\S*\s+.*?\s([^\s;|&>]+)\s*$/g)) add(m[1]);
   // inside quoted scripts: pull out absolute or multi-segment paths (strip URLs first so hosts aren't read as files)
   for (const q of quoted) {
+    // A quoted single token with glob characters is a match pattern (`rg --glob '!**/.git/**'`), not a path —
+    // a live Droid agent's search excluding .git was redirected as "/.git/" on 2026-10-18.
+    // Scripts (anything with spaces, parens or nested quotes) are still scanned.
+    if (!/[\s()'"]/.test(q) && /^!|[*?]/.test(q)) continue;
     const noUrls = q.replace(/https?:\/\/\S+/g, " ");
     for (const m of noUrls.matchAll(/(\/[\w./-]+|(?:\.\.?\/)?[\w.-]+\/[\w./-]+)/g)) add(m[1]);
   }

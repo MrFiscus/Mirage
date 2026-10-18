@@ -18,7 +18,7 @@ describe("fleet host names", () => {
 });
 // The console's pure fleet-mode helpers (Person A touched console/). The badge comes ONLY from session.attacker, so a
 // scripted run is never shown as agent behaviour; the cohort summary reports live and simulated separately.
-import { attackerBadge, cohortSummary, modeSplit, launchPath, modeById, FLEET_MODES, loopDepthFromActions, compareSummary } from "../../../console/fleet-mode.js";
+import { attackerBadge, cohortSummary, modeSplit, launchPath, launchPaths, modeById, FLEET_MODES, loopDepthFromActions, compareSummary } from "../../../console/fleet-mode.js";
 
 describe("attackerBadge: honesty on every tile", () => {
   it("labels droid as live and scripted as simulated", () => {
@@ -54,18 +54,30 @@ describe("cohortSummary: live and simulated counted apart", () => {
   });
 });
 
-describe("modeSplit / launchPath / modes mirror the server", () => {
-  it("splits match server modeSplit", () => {
+describe("modeSplit / launchPath / modes", () => {
+  it("splits: live is all Droid, demo is n-1 Droid + 1 scripted", () => {
     expect(modeSplit("live", 10)).toEqual({ live: 10, simulated: 0 });
-    expect(modeSplit("mixed", 9)).toEqual({ live: 5, simulated: 4 });
+    expect(modeSplit("demo", 6)).toEqual({ live: 5, simulated: 1 });
+    expect(modeSplit("demo", 1)).toEqual({ live: 0, simulated: 1 });
   });
-  it("launchPath carries mode and n", () => {
-    expect(launchPath("mixed", 1000)).toBe("/cage/fleet/start?mode=mixed&n=1000");
+  it("launchPath carries mode and n for live", () => {
+    expect(launchPath("live", 1000)).toBe("/cage/fleet/start?mode=live&n=1000");
   });
-  it("exposes exactly the three modes", () => {
-    expect(FLEET_MODES.map((m) => m.id)).toEqual(["live", "mixed", "scripted"]);
-    expect(modeById("scripted")?.name).toBe("Fully scripted");
-    expect(modeById("bogus")).toBeUndefined();
+  it("demo launches n-1 live agents plus one guaranteed-crossing scripted VM via the server mix form", () => {
+    expect(launchPath("demo", 3)).toBe("/cage/fleet/start?real=eval-rerun,eval-rerun&rogue=billing-sync");
+    expect(launchPath("demo", 1)).toBe("/cage/fleet/start?rogue=billing-sync");
+    expect(launchPath("demo", 2, true)).toBe("/cage/fleet/start?real=eval-rerun&rogue=billing-sync&watcher=off");
+  });
+  it("demo launches the crossing VM first, as its own fleet, then the live agents", () => {
+    expect(launchPaths("demo", 25)).toEqual(["/cage/fleet/start?rogue=billing-sync", `/cage/fleet/start?real=${Array(24).fill("eval-rerun").join(",")}`]);
+    expect(launchPaths("demo", 2, true)).toEqual(["/cage/fleet/start?rogue=billing-sync&watcher=off", "/cage/fleet/start?real=eval-rerun&watcher=off"]);
+    expect(launchPaths("demo", 1)).toEqual(["/cage/fleet/start?rogue=billing-sync"]);
+    expect(launchPaths("live", 6)).toEqual(["/cage/fleet/start?mode=live&n=6"]);
+  });
+  it("exposes exactly live and demo", () => {
+    expect(FLEET_MODES.map((m) => m.id)).toEqual(["live", "demo"]);
+    expect(modeById("demo")?.name).toBe("Demo");
+    expect(modeById("mixed")).toBeUndefined();
   });
 });
 

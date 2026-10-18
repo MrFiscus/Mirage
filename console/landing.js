@@ -29,10 +29,6 @@ document.querySelector("#landing").innerHTML = `
     </div>
   </main>
 
-  <footer class="site-footer">
-    <span>A contained experiment. <span class="footer-detail">Synthetic data. Full visibility.</span></span>
-    <span class="footer-signature">Built for the boundary.</span>
-  </footer>
 
 `;
 

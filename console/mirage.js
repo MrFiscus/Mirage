@@ -1,5 +1,5 @@
 // The console renders host-side Mirage events. Launching is always an explicit action.
-import { FLEET_MODES, modeById, modeSplit, launchPath, attackerBadge, cohortSummary, loopDepthFromActions, compareSummary, hostnameFor } from './fleet-mode.js';
+import { FLEET_MODES, modeById, launchPaths, loopDepthFromActions, compareSummary, hostnameFor } from './fleet-mode.js';
 
 const $ = (selector) => document.querySelector(selector);
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[c]));
@@ -12,6 +12,9 @@ const icon = (name) => {
     theme: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16Z" fill="currentColor" stroke="none"/>',
     folder: '<path d="M3 7V5h6l2 2h10v13H3Z"/>',
     file: '<path d="M6 3h8l4 4v14H6Zm8 0v5h4M9 12h6m-6 4h6"/>',
+    lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+    unlock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.75-1.4"/>',
+    warning: '<path d="M12 3 2 20h20Z"/><path d="M12 10v4m0 3v.5"/>',
     globe: '<circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/>',
   };
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] ?? paths.arrow}</svg>`;
@@ -33,7 +36,7 @@ $('#app').innerHTML = `
     <a class="brand" href="/" aria-label="Mirage home">Mirage.</a>
     <div class="header-tools">
       <span class="connection" id="connection" role="status" title="Connecting"><i></i><span class="sr-only">Connecting</span></span>
-      <button class="mode-toggle" id="mode-toggle" type="button"><i aria-hidden="true"></i><span id="mode-toggle-label"></span></button>
+      <button class="demo-toggle" id="mode-toggle" type="button" aria-pressed="false"><i aria-hidden="true"></i><span id="mode-toggle-label">Demo</span></button>
       <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch to dark appearance">${icon('theme')}</button>
     </div>
   </header>
@@ -47,7 +50,7 @@ $('#app').innerHTML = `
       <div class="fleet-configurator">
         <div class="fleet-preview">
           <div id="fleet-diagram" class="fleet-diagram" aria-hidden="true"></div>
-          <div class="preview-caption"><span id="preview-count">6 isolated environments</span><span class="preview-split" id="preview-split"></span><span class="preview-watcher">One watcher.</span></div>
+          <div class="preview-caption"><span id="preview-count">6 isolated environments</span><span class="preview-watcher">One watcher.</span></div>
         </div>
         <div class="setup-controls">
           <label class="count-label" for="n">How many agents?</label>
@@ -57,7 +60,7 @@ $('#app').innerHTML = `
             <div class="count-stepper"><button class="count-step" id="plus" type="button" aria-label="More agents">+</button><button class="count-step" id="minus" type="button" aria-label="Fewer agents">−</button></div>
           </div>
           <div class="presets" role="group" aria-label="Fleet size presets">${[6, 25, 100, 1000].map(n => `<button type="button" data-count="${n}" aria-pressed="${n === 6}">${n.toLocaleString()}</button>`).join('')}</div>
-          <label class="contrast-toggle"><span class="contrast-text"><strong>Watcher <em id="watcher-state">on</em></strong><span id="watcher-hint">Every call is checked. Flip to run unprotected, for the contrast.</span></span><input type="checkbox" id="watcher-off" role="switch" /><span class="switch" aria-hidden="true"></span></label>
+          <div class="lock-field"><div class="contrast-text"><strong>Watcher</strong></div><label class="lock-slider" id="lock-slider"><input type="checkbox" id="watcher-off" role="switch" aria-label="Run unprotected, with the watcher off" /><span class="lock-track" aria-hidden="true"><span class="lock-label">${icon('lock')} Protected</span><span class="lock-label">${icon('unlock')} Unprotected</span><span class="lock-thumb" id="lock-thumb"><span class="thumb-face on">${icon('lock')} Protected</span><span class="thumb-face off">${icon('unlock')} Unprotected</span></span></span></label></div>
           <div class="launch-area"><button class="button primary launch-button" id="launch" type="button" disabled><span id="launch-label">Launch 6 VMs</span> ${icon('arrow')}</button></div>
           <p class="setup-error" id="setup-error" role="alert" hidden></p>
         </div>
@@ -66,8 +69,8 @@ $('#app').innerHTML = `
 
     <section class="workspace page" id="workspace" aria-labelledby="workspace-title" hidden>
       <div class="workspace-heading">
-        <div class="workspace-title-group"><h1 id="workspace-title" tabindex="-1">Fleet</h1><span class="agent-badge" id="detail-badge" hidden></span></div>
-        <div class="workspace-actions"><span class="run-clock" id="run-clock">00:00 elapsed</span><button class="button secondary" id="new-run" type="button" disabled>New experiment ${icon('expand')}</button><button class="button secondary" id="back" type="button" hidden>${icon('back')} All environments</button></div>
+        <div class="workspace-title-group"><h1 id="workspace-title" tabindex="-1">Fleet</h1></div>
+        <div class="workspace-actions"><button class="button secondary" id="back" type="button" hidden>${icon('back')} All environments</button></div>
       </div>
       <div class="trigger-band" id="trigger-band" role="alert" hidden></div>
       <div class="headline" id="headline">
@@ -78,21 +81,21 @@ $('#app').innerHTML = `
           <div class="hmetric"><span>Agents tripped</span><strong id="s-tripped">00 / 00</strong></div>
         </div>
       </div>
-      <div class="compare" id="compare" hidden></div>
+      <div class="results-actions" id="results-actions" hidden><button class="button primary" id="see-all" type="button">See all agents ${icon('arrow')}</button><button class="button secondary" id="see-restricted" type="button">See restricted agents ${icon('arrow')}</button><button class="button secondary" id="new-run" type="button" disabled>New experiment ${icon('expand')}</button></div>
+      <div class="charts" id="charts" hidden></div>
       <div class="metrics" id="metrics">
         <div class="metric environment-metric"><span class="metric-label">Environments</span><strong id="s-vms">00<span> / 06</span></strong></div>
         <div class="metric"><span class="metric-label">Calls reviewed</span><strong id="s-moves">00</strong></div>
         <div class="metric"><span class="metric-label"><i class="legend-dot mirage"></i> Redirected</span><strong id="s-mirage">00</strong></div>
         <div class="metric"><span class="metric-label"><i class="legend-dot block"></i> Blocked</span><strong id="s-block">00</strong></div>
-        <div class="run-indicator"><span class="status-pill" id="run-status">Preparing</span><span id="run-status-note" hidden></span></div>
       </div>
-      <div class="cohorts" id="cohorts" role="status" aria-label="Results by agent type" hidden></div>
+      <div class="run-bar" id="run-bar"><div class="run-indicator"><span class="watch-eye" id="watch-eye" data-state="waking" aria-hidden="true"><svg viewBox="0 0 48 26"><defs><clipPath id="eye-clip"><path d="M2 13C8 5 16 2 24 2s16 3 22 11c-6 8-14 11-22 11S8 21 2 13Z"/></clipPath></defs><g class="eye-lid"><path class="eye-white" d="M2 13C8 5 16 2 24 2s16 3 22 11c-6 8-14 11-22 11S8 21 2 13Z"/><g clip-path="url(#eye-clip)"><g class="eye-pupil"><circle class="eye-iris" cx="24" cy="13" r="7.5"/><circle class="eye-glint" cx="26.6" cy="10.2" r="1.8"/></g></g><path class="eye-outline" d="M2 13C8 5 16 2 24 2s16 3 22 11c-6 8-14 11-22 11S8 21 2 13Z"/></g><path class="eye-shut" d="M3 13c7 6 14 8 21 8s14-2 21-8"/></svg></span><span class="status-pill" id="run-status">Preparing</span><span id="run-status-note" hidden></span><span class="run-clock" id="run-clock">00:00 elapsed</span></div><button class="button primary" id="view-results" type="button" hidden>View results ${icon('arrow')}</button></div>
 
       <div class="monitor-layout" id="monitor">
         <section class="fleet-region" aria-labelledby="fleet-heading">
-          <div class="section-heading"><h2 id="fleet-heading">Environments</h2><div class="filters" role="group" aria-label="Filter environments"><button type="button" data-filter="all" aria-pressed="true">All agents</button><button type="button" data-filter="mirage" aria-pressed="false">Redirected</button></div></div>
+          <div class="section-heading"><h2 id="fleet-heading">Environments</h2><div class="filters" role="group" aria-label="Filter environments"><button type="button" data-filter="all" aria-pressed="true">All agents</button><button type="button" data-filter="mirage" aria-pressed="false">Restricted</button></div></div>
           <div class="fleet" id="fleet"></div>
-          <div class="filter-empty" id="filter-empty" hidden><span class="empty-orbit"></span><h3>No redirects yet.</h3></div>
+          <div class="filter-empty" id="filter-empty" hidden><span class="empty-orbit"></span><h3>No restricted agents yet.</h3></div>
           <nav class="fleet-pagination" id="fleet-pagination" aria-label="Environment pages" hidden><button type="button" id="page-prev">← Previous</button><span id="fleet-page" aria-live="polite"></span><button type="button" id="page-next">Next →</button></nav>
         </section>
         <aside class="activity-region" aria-labelledby="activity-heading">
@@ -121,21 +124,13 @@ setTheme('light');
 
 function renderFleetPreview(count) {
   // An abstract view of the topology; large selections share a bounded set of representative nodes.
-  // Scripted (simulated) VMs are drawn dashed so the split is visible before launch.
   const shown = Math.min(count, 12);
-  const split = modeSplit(state.mode, count);
   const nodes = Array.from({ length: shown }, (_, index) => {
     const angle = index * Math.PI * 2 / shown - Math.PI / 2;
-    // half & half launches the two kinds interleaved, so the preview alternates them too
-    const simulated = split.live === 0 || (split.simulated > 0 && index % 2 === 1);
-    return { x: 280 + Math.cos(angle) * 174, y: 166 + Math.sin(angle) * 118, simulated };
+    return { x: 280 + Math.cos(angle) * 174, y: 166 + Math.sin(angle) * 118 };
   });
-  $('#fleet-diagram').innerHTML = `<svg viewBox="0 0 560 332" fill="none" aria-hidden="true"><ellipse cx="280" cy="166" rx="174" ry="118" class="preview-orbit"/>${nodes.map(node => `<path d="M280 166 ${node.x} ${node.y}" class="preview-wire"/>`).join('')}<circle cx="280" cy="166" r="57" class="watcher-halo"/><circle cx="280" cy="166" r="43" class="watcher-core"/><circle cx="280" cy="158" r="10" class="watcher-mark"/><text x="280" y="186" text-anchor="middle" class="watcher-label">Watcher</text>${nodes.map(node => `<g transform="translate(${node.x - 23} ${node.y - 19})"><rect width="46" height="38" rx="9" class="preview-agent${node.simulated ? ' simulated' : ''}"/><rect x="13" y="10" width="20" height="13" rx="2" class="preview-screen"/><path d="M19 28h8m-4-5v5" class="preview-screen"/></g>`).join('')}</svg>`;
+  $('#fleet-diagram').innerHTML = `<svg viewBox="0 0 560 332" fill="none" aria-hidden="true"><ellipse cx="280" cy="166" rx="174" ry="118" class="preview-orbit"/>${nodes.map(node => `<path d="M280 166 ${node.x} ${node.y}" class="preview-wire"/>`).join('')}<circle cx="280" cy="166" r="57" class="watcher-halo"/><circle cx="280" cy="166" r="43" class="watcher-core"/><circle cx="280" cy="158" r="10" class="watcher-mark"/><text x="280" y="186" text-anchor="middle" class="watcher-label">Watcher</text>${nodes.map(node => `<g transform="translate(${node.x - 23} ${node.y - 19})"><rect width="46" height="38" rx="9" class="preview-agent"/><rect x="13" y="10" width="20" height="13" rx="2" class="preview-screen"/><path d="M19 28h8m-4-5v5" class="preview-screen"/></g>`).join('')}</svg>`;
   $('#preview-count').textContent = `${count.toLocaleString()} isolated environment${count === 1 ? '' : 's'}`;
-  $('#preview-split').innerHTML = [
-    split.live ? `<span><i class="swatch live"></i>${split.live.toLocaleString()} live Droid</span>` : '',
-    split.simulated ? `<span><i class="swatch simulated"></i>${split.simulated.toLocaleString()} scripted</span>` : '',
-  ].join('');
 }
 
 function updateMode(id) {
@@ -143,13 +138,12 @@ function updateMode(id) {
   if (!mode) return;
   state.mode = mode.id;
   $('#mode-toggle').dataset.mode = mode.id;
-  $('#mode-toggle-label').textContent = mode.name;
-  $('#mode-toggle').title = `${mode.split}. ${mode.detail} Click to switch.`;
-  $('#mode-toggle').setAttribute('aria-label', `Agent mode: ${mode.name} (${mode.split}). Click to switch.`);
+  $('#mode-toggle').setAttribute('aria-pressed', String(mode.id === 'demo'));
+  $('#mode-toggle').title = mode.id === 'demo' ? 'Demo on: one VM is sure to cross the boundary' : 'Demo off: every VM runs a live agent';
   renderFleetPreview(state.count);
 }
-// Demo-only control: cycles No script → Half & half → Fully scripted so the setup form stays uncluttered.
-$('#mode-toggle').onclick = () => updateMode(FLEET_MODES[(FLEET_MODES.findIndex(m => m.id === state.mode) + 1) % FLEET_MODES.length].id);
+// Demo switch: off = every VM runs a live agent; on = one VM is guaranteed to cross, so the whole flow can be shown.
+$('#mode-toggle').onclick = () => updateMode(state.mode === 'demo' ? 'live' : 'demo');
 updateMode(state.mode);
 
 function updateCount(value) {
@@ -187,10 +181,13 @@ function switchView(view) {
   $('#monitor').hidden = view !== 'fleet';
   $('#detail').hidden = view !== 'detail';
   $('#back').hidden = view !== 'detail';
-  $('#detail-badge').hidden = view !== 'detail';
-  $('#new-run').hidden = view === 'detail';
+  // The run summary is its own page: the agents run on the fleet view, the final numbers live on results.
+  $('#headline').hidden = view !== 'results';
+  $('#results-actions').hidden = view !== 'results';
+  $('#metrics').hidden = view !== 'detail';
+  $('#run-bar').hidden = view !== 'fleet';
   document.body.dataset.view = view;
-  setTheme(view === 'fleet' ? 'dark' : 'light');
+  setTheme('light');
   renderStats();
 }
 
@@ -223,7 +220,7 @@ function getBox(id) {
 function renderFleet() {
   const focusedSession = document.activeElement?.closest('[data-session]')?.dataset.session;
   const all = [...state.boxes.values()];
-  const filtered = state.filter === 'mirage' ? all.filter(box => box.mirage > 0) : all;
+  const filtered = state.filter === 'mirage' ? all.filter(box => box.mirage > 0 || box.block > 0) : all;
   const total = state.filter === 'all' ? Math.max(state.count, all.length) : filtered.length;
   state.page = Math.min(state.page, Math.max(0, Math.ceil(total / PAGE_SIZE) - 1));
   const begin = state.page * PAGE_SIZE;
@@ -231,8 +228,7 @@ function renderFleet() {
   const visible = filtered.slice(begin, end);
   $('#fleet').innerHTML = visible.map(box => {
     const status = statusOf(box);
-    const badge = attackerBadge(box.attacker);
-    return `<button class="vm ${box.mirage ? 'has-mirage' : ''} ${box.block ? 'has-block' : ''}" type="button" data-session="${esc(box.id)}" aria-label="Inspect ${box.label}, ${esc(badge.text)}"><span class="vm-head"><span class="vm-identity"><span class="vm-icon">${icon('machine')}</span><span><b>${box.label}</b><span class="agent-badge ${badge.kind}">${esc(badge.text)}</span></span></span><span class="agent-status ${status.kind}"><i></i>${status.text}</span></span><span class="vm-term">${box.actions.length ? box.actions.slice(-3).map(action => `<span class="command-row"><span class="command-step">${pad(action.step)}</span><span class="command-symbol ${action.decision}">${action.decision === 'pass' ? '↳' : action.decision === 'mirage' ? '↪' : '×'}</span><code title="${esc(action.cmd)}">${esc(action.cmd)}</code></span>`).join('') : '<span class="card-waiting">Waiting for activity.</span>'}</span><span class="vm-foot"><span>${box.moves} call${box.moves === 1 ? '' : 's'}${box.mirage ? ` <i>·</i> ${box.mirage} redirected` : ''}</span><span class="inspect-link">Inspect ${icon('expand')}</span></span></button>`;
+    return `<button class="vm ${box.mirage ? 'has-mirage' : ''} ${box.block ? 'has-block' : ''}" type="button" data-session="${esc(box.id)}" aria-label="Inspect ${box.label}"><span class="vm-head"><span class="vm-identity"><span class="vm-icon">${icon('machine')}</span><span><b>${box.label}</b></span></span><span class="agent-status ${status.kind}"><i></i>${status.text}</span></span><span class="vm-term">${box.actions.length ? box.actions.slice(-3).map(action => `<span class="command-row"><span class="command-step">${pad(action.step)}</span><span class="command-symbol ${action.decision}">${action.decision === 'pass' ? '↳' : action.decision === 'mirage' ? '↪' : '×'}</span><code title="${esc(action.cmd)}">${esc(action.cmd)}</code></span>`).join('') : '<span class="card-waiting">Waiting for activity.</span>'}</span><span class="vm-foot"><span>${box.moves} call${box.moves === 1 ? '' : 's'}${box.mirage ? ` <i>·</i> ${box.mirage} redirected` : ''}</span><span class="inspect-link">Inspect ${icon('expand')}</span></span></button>`;
   }).join('');
   if (state.filter === 'all') {
     for (let i = Math.max(begin, all.length); i < end; i++) {
@@ -289,36 +285,55 @@ function renderStats() {
   $('#hero-oos').classList.toggle('breached', oos != null && oos > 0);
   $('#s-oos-note').textContent = oos == null ? 'waiting for the run summary' : oos === 0 ? 'nothing real was reached' : `${oos} reached the real system`;
   renderTriggerBand();
-  renderCompare();
-  // Live and simulated results are always reported side by side, never pooled into one rate.
-  const cohorts = cohortSummary([...state.boxes.values()]);
-  $('#cohorts').hidden = state.view !== 'fleet' || cohorts.length === 0;
-  $('#cohorts').innerHTML = cohorts.map(cohort => `<div class="cohort" title="${cohort.kind === 'simulated' ? 'Planned by script, not an agent decision.' : cohort.kind === 'live' ? 'Unscripted: each agent chose its own calls.' : ''}"><span class="agent-badge ${cohort.kind}">${esc(cohort.label)}</span><span class="cohort-text"><strong>${esc(cohort.text)}</strong></span></div>`).join('');
+  renderCharts();
   const complete = state.phase === 'complete';
   const status = focused ? statusOf(focused) : null;
   $('#run-status').textContent = status?.text ?? (complete ? 'Run complete' : state.boxes.size ? 'Observing' : 'Provisioning');
   $('#run-status').className = `status-pill ${status?.kind ?? (complete ? 'neutral' : 'pass')}`;
+  // The watcher's eye: scanning while agents run, locked on (red) once a boundary is crossed, shut when the run ends.
+  $('#watch-eye').dataset.state = complete ? 'done' : state.boxes.size ? (state.trigger ? 'alert' : 'watching') : 'waking';
   $('#run-status-note').hidden = !complete || state.failures.length === 0;
   $('#run-status-note').textContent = `${state.failures.length} environment error${state.failures.length === 1 ? '' : 's'}`;
   $('#new-run').disabled = !complete;
-  if (state.view === 'fleet') {
-    $('#workspace-title').textContent = 'Fleet';
-  }
+  $('#view-results').hidden = !complete;
+  if (state.view === 'fleet') $('#workspace-title').textContent = 'Fleet';
+  if (state.view === 'results') $('#workspace-title').textContent = 'Results.';
 }
 function renderTriggerBand() {
   const band = $('#trigger-band');
-  if (!state.trigger || state.view !== 'fleet') { band.hidden = true; return; }
+  if (!state.trigger || (state.view !== 'fleet' && state.view !== 'results')) { band.hidden = true; return; }
   const t = state.trigger;
   band.hidden = false;
-  band.innerHTML = `<strong>Boundary crossed</strong><span>${esc(t.label)} · step ${t.step} · ${esc(t.reason)}</span><time>${new Date(t.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time>${t.count > 1 ? `<span class="trip-count">${t.count} agents tripped</span>` : ''}`;
+  band.innerHTML = `<span class="alarm-icon">${icon('warning')}</span><strong>Boundary crossed</strong><span>${esc(t.label)} · step ${t.step} · ${esc(t.reason)}</span><time>${new Date(t.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time>${t.count > 1 ? `<span class="trip-count">${t.count} agents tripped</span>` : ''}`;
 }
-function renderCompare() {
-  const el = $('#compare');
-  const { on, off } = compareSummary(state.lastRun.on, state.lastRun.off);
-  if ((!on && !off) || state.view !== 'fleet') { el.hidden = true; return; }
+// Results charts: where every call went, watcher on vs. off, and each agent's run step by step.
+function renderCharts() {
+  const el = $('#charts');
+  if (state.view !== 'results') { el.hidden = true; return; }
   el.hidden = false;
-  el.innerHTML = `<h3>Watcher on vs. off</h3><div class="compare-grid">${[on, off].filter(Boolean).map(s => `<div class="compare-card ${s.label.includes('Without') ? 'bad' : 'good'}"><span>${esc(s.label)}</span><strong>${esc(s.value)}</strong><small>${esc(s.note)}</small></div>`).join('')}</div>`;
+  const boxes = [...state.boxes.values()];
+  const total = (field) => boxes.reduce((t, b) => t + b[field], 0);
+  const mirage = total('mirage'), block = total('block'), calls = total('moves'), pass = Math.max(0, calls - mirage - block);
+  const pct = (n) => calls ? (n / calls) * 100 : 0;
+  const split = `<section class="chart-card"><h3>Where every call went</h3><p class="chart-sub">${calls} tool call${calls === 1 ? '' : 's'} ${state.watcherOff ? 'made with the watcher <b>off</b>, so none were checked,' : 'checked'} across ${boxes.length} agent${boxes.length === 1 ? '' : 's'}</p>
+    <div class="stack-bar" role="img" aria-label="${pass} passed, ${mirage} redirected, ${block} blocked">${[['pass', pass], ['mirage', mirage], ['block', block]].filter(([, n]) => n).map(([k, n]) => `<i class="seg ${k}" style="width:${pct(n)}%"></i>`).join('') || '<i class="seg empty" style="width:100%"></i>'}</div>
+    <div class="stack-legend">${[['pass', 'Passed', 'ran on the real env', pass], ['mirage', 'Redirected', 'served by the mirage', mirage], ['block', 'Blocked', 'escape attempts stopped', block]].map(([k, name, note, n]) => `<div class="legend-item ${k}"><span class="legend-swatch ${k}"></span><strong>${n}</strong><span>${name}</span><small>${Math.round(pct(n))}% · ${note}</small></div>`).join('')}</div></section>`;
+  const { on, off } = compareSummary(state.lastRun.on, state.lastRun.off);
+  const num = (side) => side && side.value !== '—' ? Number(side.value) : null;
+  const vOn = num(on), vOff = num(off), max = Math.max(1, vOn ?? 0, vOff ?? 0);
+  const bar = (side, value, kind, label) => `<div class="vbar ${kind}${side ? '' : ' missing'}"><strong>${side ? side.value : '?'}</strong><div class="vbar-track"><i style="height:${value == null ? 0 : Math.max(2, (value / max) * 100)}%"></i></div><span>${label}</span><small>${side ? esc(side.note) : 'flip the watcher off and run again'}</small></div>`;
+  const contrast = `<section class="chart-card"><h3>Real out-of-scope access</h3><p class="chart-sub">Same task, watcher on vs. off</p><div class="vbars">${bar(on, vOn, 'on', 'Watcher on')}${bar(off, vOff, 'off', 'Watcher off')}</div></section>`;
+  // With the watcher off nothing is redirected, so "passed" does not mean "in scope": say what really happened.
+  const laneTail = (b) => state.watcherOff
+    ? (b.realOutOfScope ? `<span class="lane-tail block">${b.realOutOfScope} reached the real system</span>` : `<span class="lane-tail neutral">Unprotected</span>`)
+    : `<span class="lane-tail ${b.block ? 'block' : b.mirage ? 'mirage' : 'pass'}">${b.block ? 'Blocked' : b.mirage ? 'In the mirage' : 'Stayed in scope'}</span>`;
+  const longest = Math.max(1, ...boxes.map(b => b.actions.length));
+  const shown = boxes.slice(0, 40);
+  const lanes = `<section class="chart-card wide"><h3>Every agent, step by step</h3><p class="chart-sub">One dot per tool call · <span class="key pass">passed</span> <span class="key mirage">redirected</span> <span class="key block">blocked</span> · click an agent to inspect it</p>
+    <div class="lanes">${shown.map(b => `<button class="lane" type="button" data-open="${esc(b.id)}"><span class="lane-name">${b.label}</span><span class="lane-track" style="--steps:${longest}">${b.actions.map(a => `<i class="dot ${a.decision}" title="#${a.step} ${esc(a.cmd)}"></i>`).join('')}</span>${laneTail(b)}</button>`).join('')}</div>${boxes.length > shown.length ? `<p class="chart-sub">and ${boxes.length - shown.length} more agents</p>` : ''}</section>`;
+  el.innerHTML = `<div class="chart-grid">${split}${contrast}</div>${lanes}`;
 }
+$('#charts').addEventListener('click', (event) => { const lane = event.target.closest('[data-open]'); if (lane) openDetail(lane.dataset.open); });
 function updateFelt(box) {
   const wrap = $('#felt-progress');
   if (!box || !box.progress) { wrap.hidden = true; return; }
@@ -338,9 +353,6 @@ function openDetail(id) {
   state.focus = id;
   switchView('detail');
   $('#workspace-title').textContent = `${box.label}.`;
-  const badge = attackerBadge(box.attacker);
-  $('#detail-badge').className = `agent-badge ${badge.kind}`;
-  $('#detail-badge').textContent = badge.text;
   renderDetail(box, true);
   updateFelt(box);
   $('#forensic').hidden = false; $('#forensic').innerHTML = `Download forensic log ${icon('expand')}`;
@@ -390,7 +402,7 @@ function renderDetail(box, initial = false) {
   $('#tree').innerHTML = (paths.length ? tree(root) : '<p class="path-empty">No file paths observed yet.</p>') + (hosts.size ? `<div class="network-heading">Network</div>${[...hosts].map(([host, action]) => `<div class="node network-node"><span class="node-icon">${icon('globe')}</span><span class="node-name">${esc(host)}</span><span class="node-verdict ${action.decision}">${verdictName[action.decision]}</span></div>`).join('')}` : '');
   const term = $('#term');
   const followTail = !initial && term.scrollHeight - term.scrollTop - term.clientHeight < 60;
-  term.innerHTML = box.actions.length ? box.actions.map(action => `<article class="log-entry"><div class="log-meta"><span class="log-step">#${action.step}</span><span class="decision-badge ${action.decision}">${verdictName[action.decision]}</span></div><code class="log-command"><span>$</span> ${esc(action.cmd)}</code>${action.thought ? `<blockquote class="agent-note">${esc(action.thought)}</blockquote>` : ''}<p class="watcher-reason"><span>↳</span> ${esc(action.reason || (action.decision === 'pass' ? 'Within approved scope.' : 'Outside approved scope.'))}</p>${box.serves.has(action.callId) ? `<details class="served"><summary>What the mirage showed the agent</summary><pre>${esc(String(box.serves.get(action.callId)).slice(0, 700))}</pre></details>` : ''}</article>`).join('') : '<div class="log-empty">The first tool call will appear here.</div>';
+  term.innerHTML = box.actions.length ? box.actions.map(action => `<article class="log-entry" data-decision="${action.decision}"><div class="log-meta"><span class="log-step">#${action.step}</span><span class="decision-badge ${action.decision}">${verdictName[action.decision]}</span></div><code class="log-command"><span>$</span> ${esc(action.cmd)}</code>${action.thought ? `<blockquote class="agent-note">${esc(action.thought)}</blockquote>` : ''}<p class="watcher-reason"><span>↳</span> ${esc(action.reason || (action.decision === 'pass' ? 'Within approved scope.' : 'Outside approved scope.'))}</p>${box.serves.has(action.callId) ? `<details class="served"><summary>What the mirage showed the agent</summary><pre>${esc(String(box.serves.get(action.callId)).slice(0, 700))}</pre></details>` : ''}</article>`).join('') : '<div class="log-empty">The first tool call will appear here.</div>';
   if (initial) term.scrollTop = 0;
   else if (followTail) term.scrollTop = term.scrollHeight;
   updateFelt(box);
@@ -409,10 +421,15 @@ async function start() {
   $('#workspace-title').focus({ preventScroll: true });
   try {
     // The chosen mode decides what runs; the server refuses live modes without a Factory key instead of substituting scripts.
-    const response = await fetch(launchPath(state.mode, state.count, state.watcherOff), { method: 'POST' });
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      throw new Error(typeof body.error === 'string' ? body.error : `The server returned ${response.status}.`);
+    // Demo is two fleets (the guaranteed crossing first, then the live agents); the run ends when every fleet completes.
+    const paths = launchPaths(state.mode, state.count, state.watcherOff);
+    state.fleetsLeft = paths.length;
+    for (const path of paths) {
+      const response = await fetch(path, { method: 'POST' });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(typeof body.error === 'string' ? body.error : `The server returned ${response.status}.`);
+      }
     }
   } catch (error) {
     state.phase = 'error'; state.endedAt = Date.now();
@@ -423,21 +440,64 @@ async function start() {
   }
 }
 $('#launch').onclick = start;
-// Redirected and Agents-tripped double as a shortcut to the redirected filter (click again to clear it).
+// Results → the live fleet, optionally narrowed to agents the watcher redirected or blocked.
+function showAgents(filter) {
+  switchView('fleet');
+  document.querySelector(`[data-filter="${filter}"]`).click();
+  window.scrollTo({ top: 0, behavior: 'instant' });
+}
+function showResults() {
+  switchView('results');
+  $('#workspace-title').focus({ preventScroll: true });
+  window.scrollTo({ top: 0, behavior: 'instant' });
+}
+$('#see-all').onclick = () => showAgents('all');
+$('#see-restricted').onclick = () => showAgents('mirage');
+$('#view-results').onclick = showResults;
+// Redirected and Agents-tripped double as a shortcut to the restricted agents.
 for (const sel of ['#s-mirage', '#s-tripped']) {
   const tile = $(sel).parentElement;
-  tile.classList.add('jump'); tile.tabIndex = 0; tile.setAttribute('role', 'button'); tile.title = 'Show only redirected environments';
-  const go = () => document.querySelector(`[data-filter="${state.filter === 'mirage' ? 'all' : 'mirage'}"]`).click();
+  tile.classList.add('jump'); tile.tabIndex = 0; tile.setAttribute('role', 'button'); tile.title = 'Show only restricted agents';
+  const go = () => showAgents('mirage');
   tile.onclick = go;
   tile.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); go(); } };
 }
-// Watcher-off switch: reflect the state in the card copy and tint the launch button red.
+// Watcher-off switch: tint the launch button when running unprotected.
 $('#watcher-off').onchange = () => {
   const off = $('#watcher-off').checked;
-  $('#watcher-state').textContent = off ? 'off' : 'on';
-  $('#watcher-hint').textContent = off ? 'Unprotected: out-of-scope calls will reach the real system.' : 'Every call is checked. Flip to run unprotected, for the contrast.';
   $('#launch').classList.toggle('unprotected', off);
 };
+// Drag the lock thumb across; releasing past the midpoint flips it. A plain click/tap or Space still toggles natively.
+{
+  const slider = $('#lock-slider'), thumb = $('#lock-thumb'), box = $('#watcher-off');
+  let drag = null, swallowClick = false;
+  slider.onpointerdown = (event) => {
+    if (event.button !== 0) return;
+    drag = { x0: event.clientX, base: box.checked ? thumb.offsetWidth : 0, max: thumb.offsetWidth, x: 0, moved: false };
+    slider.setPointerCapture(event.pointerId);
+  };
+  slider.onpointermove = (event) => {
+    if (!drag) return;
+    const dx = event.clientX - drag.x0;
+    if (Math.abs(dx) > 4) drag.moved = true;
+    if (!drag.moved) return;
+    slider.classList.add('dragging');
+    drag.x = Math.min(drag.max, Math.max(0, drag.base + dx));
+    thumb.style.setProperty('--x', `${drag.x}px`);
+  };
+  slider.onpointerup = slider.onpointercancel = () => {
+    if (!drag) return;
+    const { moved, x, max } = drag;
+    drag = null;
+    slider.classList.remove('dragging');
+    thumb.style.removeProperty('--x');
+    if (!moved) return;
+    swallowClick = true; setTimeout(() => { swallowClick = false; }, 0);
+    const off = x > max / 2;
+    if (off !== box.checked) { box.checked = off; box.dispatchEvent(new Event('change')); }
+  };
+  slider.addEventListener('click', (event) => { if (swallowClick) { event.preventDefault(); swallowClick = false; } });
+}
 $('#new-run').onclick = () => {
   if (state.phase !== 'complete') return;
   switchView('setup');
@@ -466,7 +526,7 @@ function handle(event) {
       if (!state.trigger) state.trigger = { step: action.step, reason: action.reason || 'outside approved scope', label: box.label, ts: call.ts ?? Date.now(), count: 1, sessions: new Set([box.id]) };
       else if (!state.trigger.sessions.has(box.id)) { state.trigger.sessions.add(box.id); state.trigger.count = state.trigger.sessions.size; }
     }
-    addFeed({ kind: action.decision, tag: verdictName[action.decision], label: `${box.label} · ${attackerBadge(box.attacker).text}`, detail: action.cmd, ts: call.ts });
+    addFeed({ kind: action.decision, tag: verdictName[action.decision], label: box.label, detail: action.cmd, ts: call.ts });
     renderFleet(); renderStats();
     if (state.view === 'detail' && state.focus === box.id) renderDetail(box);
   } else if (event.type === 'mirage.served') {
@@ -495,7 +555,7 @@ function handle(event) {
     if (event.action === 'fleet.failed') finish();
   } else if (event.type === 'audit' && event.action === 'fleet.budget') {
     addFeed({ kind: 'neutral', tag: 'Token budget', label: 'Fleet', detail: event.detail });
-  } else if (event.type === 'audit' && event.action === 'fleet.complete') finish();
+  } else if (event.type === 'audit' && event.action === 'fleet.complete') { state.fleetsLeft = Math.max(0, (state.fleetsLeft ?? 1) - 1); if (state.fleetsLeft === 0) finish(); }
 }
 function finish() {
   state.phase = 'complete'; state.endedAt = Date.now();
@@ -504,6 +564,7 @@ function finish() {
   const oos = boxes.some(b => b.realOutOfScope != null) ? boxes.reduce((t, b) => t + (b.realOutOfScope ?? 0), 0) : null;
   state.lastRun[state.watcherOff ? 'off' : 'on'] = { realOutOfScope: oos };
   renderFleet(); renderStats(); updateClock();
+  if (state.view === 'fleet') showResults();
 }
 function renderConnection() {
   $('#connection').classList.toggle('connected', state.connected);

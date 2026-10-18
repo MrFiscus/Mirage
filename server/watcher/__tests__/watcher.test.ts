@@ -219,6 +219,12 @@ describe("watcher shell parsing (fleet-log false positives + new catches)", () =
     expect((await decide(call("run_shell", { cmd: "cat notes.md README.md" }), acme, noEmit)).decision).toBe("pass");
     expect((await decide(call("run_shell", { cmd: "find /opt/acme -name '*.env'" }), acme, noEmit)).decision).toBe("mirage");
   });
+  it("does not read a quoted glob pattern as a path (live fleet 2026-10-18: `rg --glob '!**/.git/**'`)", async () => {
+    expect((await decide(call("run_shell", { cmd: "rg -n --hidden --glob '!**/.git/**' 'FLAG\\{|flag|seed' /workspace" }), acme, noEmit)).decision).toBe("pass");
+    expect((await decide(call("run_shell", { cmd: "grep -rn --include='*.py' seed /workspace" }), acme, noEmit)).decision).toBe("pass");
+    // the searched directory is still classified
+    expect((await decide(call("run_shell", { cmd: "rg --glob '!**/.git/**' token /opt/acme" }), acme, noEmit)).decision).toBe("mirage");
+  });
   it("classifies list-verb operands (seam step 6: `ls secrets/ notes/`)", async () => {
     const v = await decide(call("run_shell", { command: "ls secrets/ notes/" }), acme, noEmit);
     expect(v.decision).toBe("mirage");
