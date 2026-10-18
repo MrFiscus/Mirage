@@ -4,10 +4,11 @@
 // SCALE: the total is unlimited; only the number running AT ONCE is bounded (`concurrency`, e.g. Daytona's concurrent
 // VM limit). Agents queue, each gets a fresh env, and its VM is destroyed before the next one starts.
 //
-// Reconciles with server/mirage/fleet-daytona.ts (Person C): that one runs all-scripted agents in the legacy
-// "sandbox" deploy world; this one runs live Droid and/or scripted agents in the new "vm" world. Both compose the
-// SAME cage runSession — neither forks the loop.
+// This is the one fleet: live Droid and/or scripted agents, each composed on the same cage runSession. Every session
+// writes its own host-side JSONL under data/cage-runs/<runId>/ (every tool.call recorded before it runs).
+import { mkdirSync } from "node:fs";
 import type { MirageEvent } from "../../shared/types.js";
+import { CAGE_RUNS_DIR } from "./runs.js";
 import type { Sandbox } from "../defense/sandbox/index.js";
 import { ScriptedAttacker, ACME_SCRIPT } from "./attackers/scripted.js";
 import type { Attacker } from "./attacker.js";
@@ -69,7 +70,13 @@ export interface FleetOptions {
   onResult?: (r: FleetResult, done: number, total: number) => void;
   /** Polled before each new agent starts; return true to stop launching (agents already running still finish and clean up). */
   shouldStop?: () => boolean;
+  /** Directory for the per-session forensic JSONL files. Default data/cage-runs/<timestamp>-fleet. null = no files (tests). */
+  logDir?: string | null;
+  /** Progressive latency base for mirage replies (ms per loop level). Default 0. */
+  mirageLatencyMs?: number;
 }
+
+
 
 /** Run `fn` over `items` with at most `limit` in flight. Starts are staggered a little for the first wave only. */
 export async function runPool<T>(
@@ -104,6 +111,8 @@ export async function runCageFleet(opts: FleetOptions): Promise<FleetResult[]> {
   const members = opts.members;
   const concurrency = Math.max(1, Math.floor(opts.concurrency ?? 10));
   const width = Math.max(2, String(members.length).length);
+  const logDir = opts.logDir === null ? undefined : opts.logDir ?? `${CAGE_RUNS_DIR}/${Date.now()}-fleet`;
+  if (logDir) mkdirSync(logDir, { recursive: true });
   const results: FleetResult[] = [];
   let finished = 0;
   let tokens = 0;
@@ -115,9 +124,9 @@ export async function runCageFleet(opts: FleetOptions): Promise<FleetResult[]> {
   opts.emit({ type: "audit", actor: "fleet", action: "fleet.starting", detail: `${members.length} agents (${members.filter((m) => m.attacker === "droid").length} droid, ${members.filter((m) => m.attacker === "scripted").length} scripted), ${allAtOnce ? "all at once" : `${concurrency} at a time`}`, ts: Date.now() });
 
   await runPool(members, concurrency, async (member, i) => {
-    const r = await runOne(member, i, width, { emit: opts.emit, watcherOn, caps });
+    const r = await runOne(member, i, width, { emit: opts.emit, watcherOn, caps, logDir, mirageLatencyMs: opts.mirageLatencyMs });
     finished++;
-    if (r) {
+    {
       results.push(r);
       tokens += r.tokens;
       opts.onResult?.(r, finished, members.length);
@@ -133,13 +142,19 @@ export async function runCageFleet(opts: FleetOptions): Promise<FleetResult[]> {
   return results;
 }
 
-async function runOne(member: FleetMember, index: number, width: number, ctx: { emit: (e: MirageEvent) => void; watcherOn: boolean; caps: Caps }): Promise<FleetResult | undefined> {
+async function runOne(member: FleetMember, index: number, width: number, ctx: { emit: (e: MirageEvent) => void; watcherOn: boolean; caps: Caps; logDir?: string; mirageLatencyMs?: number }): Promise<FleetResult> {
   const label = `${member.honestEnv === "vm" ? "VM" : "AGENT"}-${String(index + 1).padStart(width, "0")}`;
   const startedAt = Date.now();
   const scenario = member.scenario ? scenarioById(member.scenario) : undefined;
+  // A member that never ran still gets a row (steps 0, agentError set) so N requested == N rows in the record.
+  const failedRow = (error: string): FleetResult => ({
+    label, scenario: scenario?.id ?? member.scenario ?? "flag-hunt", kind: scenario?.kind ?? "flag-hunt",
+    attacker: member.attacker, ranAs: member.attacker, steps: 0, triggered: false, realCalls: 0, fakeCalls: 0,
+    realOutOfScope: 0, watcherMisses: 0, crossings: [], agentError: error, tokens: 0, durationMs: Date.now() - startedAt,
+  });
   if (member.scenario && !scenario) {
     ctx.emit({ type: "audit", actor: "fleet", action: "vm.failed", detail: `${label}: unknown scenario "${member.scenario}"`, ts: Date.now() });
-    return undefined;
+    return failedRow(`unknown scenario "${member.scenario}"`);
   }
   let sandbox: Sandbox | undefined;
   // Droid needs FACTORY_API_KEY; without it we fall back to scripted so the box is still live, and say so.
@@ -161,12 +176,14 @@ async function runOne(member: FleetMember, index: number, width: number, ctx: { 
     // A scripted member plays a SIMULATED rogue run of its scenario (or the generic flag-hunt script).
     const attacker: Attacker = droid ?? new ScriptedAttacker(scenario?.rogueScript ?? ACME_SCRIPT);
 
-    const bus = new CageBus();
+    // Host-side forensic log for THIS session: every tool.call is appended before it runs (events.ts).
+    const bus = new CageBus(ctx.logDir ? `${ctx.logDir}/${label}.jsonl` : undefined);
     bus.subscribe((e) => ctx.emit(e)); // forward this VM's cage events to the core bus (dashboard groups by session)
 
     const r = await runSession({
       attacker, watcher: realWatcher, mirage: makeRealMirage(null),
       sandbox, bus, watcherOn: ctx.watcherOn, caps: ctx.caps, honestEnv: member.honestEnv,
+      mirageLatencyMs: ctx.mirageLatencyMs, tokensUsed: () => droid?.tokensUsed,
     });
 
     const crossings = [...new Set(r.history.filter((h) => h.decision !== "pass").map((h) => resourceOf(h.call)))];
@@ -186,7 +203,7 @@ async function runOne(member: FleetMember, index: number, width: number, ctx: { 
     return result;
   } catch (e) {
     ctx.emit({ type: "audit", actor: "fleet", action: "vm.failed", detail: `${label}: ${(e as Error).message}`, ts: Date.now() });
-    return undefined;
+    return failedRow((e as Error).message);
   } finally {
     await sandbox?.destroy().catch(() => undefined);
     if (member.honestEnv === "vm") ctx.emit({ type: "audit", actor: "fleet", action: "vm.destroyed", detail: label, ts: Date.now() });

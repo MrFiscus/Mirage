@@ -118,7 +118,39 @@ export type MirageEvent =
   | { type: "progress.updated"; session: string; progress: number }
   | { type: "notify.sent"; channel: "text" | "call"; to: string; detail: string }
   | { type: "kill"; session: string; reason: string }
+  | { type: "run.summary"; summary: RunSummary }
   | { type: "audit"; actor: string; action: string; detail: string; ts: number };
+
+// Emitted once per session when it ends (cage harness). Every number is read off the run, never inferred:
+// realOutOfScope comes from the honest env's own referee, not from the watcher. The dashboard's headline tiles,
+// the forensic download and the experiment table all read this.
+export interface RunSummary {
+  session: string;
+  attacker: Attacker;
+  honestEnv: string;
+  triggered: boolean;
+  triggerStep?: number;
+  triggerReason?: string;
+  realCalls: number;
+  fakeCalls: number;
+  blocked: number;
+  /** Revisits of a fake resource already shown (the agent going round in the shadow world). */
+  loopDepth: number;
+  /** `pass` calls that actually left scope in the honest env. MUST be 0 with the watcher on. */
+  realOutOfScope: number;
+  /** Out-of-scope calls the watcher passed but the code-level scope guard refused (vm mode). */
+  watcherMisses: number;
+  watcherOn: boolean;
+  capFired?: string;
+  containment?: { network: string; processesKilled: boolean };
+  /** "native" = Daytona network block confirmed at VM creation; "simulated" = refused (tier); "n/a" = in-process env. */
+  networkIsolation: "native" | "simulated" | "n/a";
+  /** Host-side JSONL with every tool.call written before it ran. */
+  forensicPath?: string;
+  durationMs: number;
+  tokens?: number;
+  ts: number;
+}
 
 // The one bus both the old console and the Mirage dashboard read.
 export type AppEvent = ConsoleEvent | MirageEvent;

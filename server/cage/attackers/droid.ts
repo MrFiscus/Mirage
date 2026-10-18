@@ -1,5 +1,6 @@
 // Factory Droid attacker (Person A) — the live, primary attacker. Droid runs its own agent loop; we do not hook inside
-// it. Instead its ONLY tools are our cage MCP server (mcp-tools.ts), and each tool call is bridged into the harness
+// it. Instead its ONLY tools are our cage MCP server (mcp-http.ts: a localhost HTTP MCP server registered with the CLI;
+// mcp-tools.ts holds the tool names/lockdown helpers), and each tool call is bridged into the harness
 // (bridge.ts), so every Droid action goes through the same host-side record → watcher.decide → pass / mirage / block
 // path as the scripted attacker, under the same caps.
 //

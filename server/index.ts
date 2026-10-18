@@ -18,6 +18,10 @@ import { ScriptedAttacker, ACME_SCRIPT } from "./cage/attackers/scripted.js";
 import { makeRealMirage, NullSandbox, realWatcher } from "./cage/wire.js";
 import { runCageFleet } from "./cage/fleet.js";
 import { planFleet, chooseConcurrency } from "./cage/fleet-plan.js";
+import { getActive } from "./cage/active.js";
+import { CAGE_RUNS_DIR, findRunFile, listRunFiles, listSummaries, recordSummary } from "./cage/runs.js";
+import { basename } from "node:path";
+import { createReadStream, existsSync } from "node:fs";
 
 const app = express();
 const httpServer = createServer(app);
@@ -38,6 +42,10 @@ subscribe((event) => {
   }
 });
 const publish = emit;
+// Keep every session's run.summary so /cage/runs and /mirage/forensics can answer after the run ended.
+subscribe((event) => { if (event.type === "run.summary") recordSummary(event.summary); });
+// Progressive latency for mirage replies in server-driven runs (ms per loop level, bounded at 3 s). 0 disables.
+const mirageLatencyMs = Number(process.env.CAGE_MIRAGE_LATENCY_MS ?? 250) || 0;
 
 // Defense engine (Person 2): routes. Its events already go through core emit, which the
 // subscription above broadcasts, so forwarding them here again would double-send.
@@ -52,7 +60,7 @@ app.use(mirageRouter);
 // every MirageEvent onto the core bus so the dashboard renders the run live. ?watcher=off for the contrast run.
 app.post("/cage/start", (request, response) => {
   const watcherOn = request.query.watcher !== "off";
-  const bus = new CageBus(`data/cage-runs/${Date.now()}-dashboard.jsonl`);
+  const bus = new CageBus(`${CAGE_RUNS_DIR}/${Date.now()}-dashboard-${watcherOn ? "on" : "off"}.jsonl`);
   const unbridge = bus.subscribe((event) => publish(event));
   void runSession({
     attacker: new ScriptedAttacker(ACME_SCRIPT),
@@ -62,6 +70,7 @@ app.post("/cage/start", (request, response) => {
     bus,
     watcherOn,
     honestEnv: "acme",
+    mirageLatencyMs,
   })
     .catch((error: Error) => publish({ type: "audit", actor: "cage", action: "run.failed", detail: error.message, ts: Date.now() }))
     .finally(() => unbridge());
@@ -84,9 +93,36 @@ app.post("/cage/fleet/start", (request, response) => {
   // Once reached, no NEW agents start (running ones finish), and fleet.budget is emitted.
   const budget = Number(request.query.tokenBudget ?? process.env.CAGE_TOKEN_BUDGET);
   const tokenBudget = Number.isFinite(budget) && budget > 0 ? budget : undefined;
-  void runCageFleet({ members, emit: publish, watcherOn, concurrency, tokenBudget })
+  void runCageFleet({ members, emit: publish, watcherOn, concurrency, tokenBudget, mirageLatencyMs })
     .catch((error: Error) => publish({ type: "audit", actor: "fleet", action: "fleet.failed", detail: error.message, ts: Date.now() }));
   return response.status(202).json({ started: true, mode: plan.mode, agents: members.length, live: members.filter((m) => m.attacker === "droid").length, simulated: members.filter((m) => m.attacker === "scripted").length, concurrency, tokenBudget: tokenBudget ?? null, watcherOn });
+});
+
+// Forensic record. Every session's host-side JSONL (tool.call written before it ran) + its run.summary.
+app.get("/cage/runs", (_request, response) => {
+  const files = listRunFiles();
+  const summaries = new Map(listSummaries().map((s) => [s.session, s]));
+  return response.json(files.map((f) => ({ ...f, summary: summaries.get(f.session) ?? null })));
+});
+app.get("/cage/runs/:session", (request, response) => {
+  const session = String(request.params.session).replace(/[^\w.-]/g, "");
+  const path = findRunFile(session);
+  if (!path || !existsSync(path)) return response.status(404).json({ error: "forensic log not available for this session" });
+  response.setHeader("Content-Type", "application/x-ndjson");
+  response.setHeader("Content-Disposition", `attachment; filename="mirage-${session}-${basename(path)}"`);
+  return createReadStream(path).pipe(response);
+});
+
+// Verified-defender containment (Person D's voice tool calls this after a spoken "contain"). It goes through the
+// same abort path as the caps: the session's loop stops, contain() runs on its env, kill + run.summary are emitted.
+// It never asks the watcher or the agent. 404 when the session is not running in this process.
+app.post("/cage/sessions/:session/contain", (request, response) => {
+  const active = getActive(String(request.params.session));
+  if (!active) return response.status(404).json({ error: "no running session with that id" });
+  active.stop();
+  publish({ type: "audit", actor: "defender", action: "containment.authorized", detail: `${active.id}: stop requested by a verified defender`, ts: Date.now() });
+  // The run's own contain() result arrives on run.summary; "requested" here is honest: it is in flight.
+  return response.json({ contained: true, session: active.id, network: "requested; see run.summary.containment" });
 });
 
 app.get("/api/health", (_request, response) => response.json({ ok: true, service: "batman-console" }));

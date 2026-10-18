@@ -3,7 +3,9 @@
 import express from "express";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe as describeAll, expect, it } from "vitest";
+// Legacy Batman scenarios need a POSIX local sandbox; on Windows they run only against Daytona.
+const describe = describeAll.skipIf(process.platform === "win32" && process.env.SANDBOX_BACKEND !== "daytona");
 import { approve } from "../approval.js";
 import { getIncident } from "../core.js";
 import { cleanup, startScenario } from "../orchestrator.js";

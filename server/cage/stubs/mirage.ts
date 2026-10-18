@@ -1,5 +1,5 @@
-// MOCK mirage (Person A). Returns a canned, consistent fake for a `mirage` verdict. This is the integration seam for
-// Person C's real simulator (world ledger + progress controller). Nothing here reads a real file or reaches a sandbox.
+// TEST DOUBLE only (Person A). Returns a canned, consistent fake for a `mirage` verdict so the harness unit tests and
+// the kill test need no world ledger. The product path uses the real Simulator (wire.ts makeRealMirage).
 // The fake value NEVER matches a flag format and never leaks a real secret.
 import type { CageToolCall, LedgerEntry, Mirage, Session } from "../types.js";
 

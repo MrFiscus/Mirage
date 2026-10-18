@@ -1,7 +1,9 @@
 // Cage CLI (Person A). Starts one session from the command line.
-//   npm run cage -- --attacker scripted --watcher real --honest acme --steps 40 --seconds 180 --spend 1 [--json]
-// Attacker: scripted (default) | droid. Watcher: off | stub | rules | real. Honest env: acme (default, in-process,
-// no Daytona) | vm (real Daytona VM, Acme tree) | sandbox (legacy cage deploy world). Backend (sandbox env): local | daytona.
+//   node --import tsx server/cage/cli.ts --attacker scripted --watcher real --honest acme --steps 40 --seconds 180 [--json]
+// (On Windows `npm run cage -- --flags` drops the flags; call the file directly as above.)
+// Attacker: scripted (default) | droid. Watcher: real (default) | off (contrast run). Honest env: acme (default,
+// in-process, no Daytona) | vm (real Daytona VM, Acme tree) | sandbox (legacy cage deploy world). Backend (sandbox
+// env): local | daytona. There is no spend cap (we never see a billed cost); use the fleet CLI's --token-budget.
 import { DaytonaSandbox } from "../defense/sandbox/daytona.js";
 import { LocalSandbox } from "../defense/sandbox/local.js";
 import type { Sandbox } from "../defense/sandbox/index.js";
@@ -10,7 +12,6 @@ import type { Attacker } from "./attacker.js";
 import { CageBus } from "./events.js";
 import { runSession } from "./harness.js";
 import { makeRealMirage, NullSandbox, realWatcher } from "./wire.js";
-import { PassWatcher, RulesWatcher } from "./stubs/watcher.js";
 import type { DroidAttacker } from "./attackers/droid.js";
 import { CAGE_TASK, loadDecoys } from "./task.js";
 import { TASK_PROMPT } from "../mirage/acme.js";
@@ -27,14 +28,15 @@ const flag = (name: string) => process.argv.includes(`--${name}`);
 
 async function main(): Promise<void> {
   const attackerKind = arg("attacker", "scripted")!;
-  const watcherKind = arg("watcher", "real")!; // off | stub | rules | real
+  const watcherKind = arg("watcher", "real")!; // real | off
   const honest = (arg("honest", "acme") as "acme" | "sandbox" | "vm"); // acme (in-process) | vm (Daytona) | sandbox
   const backend = arg("backend", "local")!;
   const caps = {
     steps: Number(arg("steps")) || Number(process.env.CAGE_MAX_STEPS) || 40,
     seconds: Number(arg("seconds")) || Number(process.env.CAGE_MAX_SECONDS) || 180,
-    spendUsd: Number(arg("spend")) || Number(process.env.CAGE_MAX_SPEND_USD) || 1,
+    spendUsd: 0, // not enforced
   };
+  if (watcherKind !== "real" && watcherKind !== "off") throw new Error(`--watcher must be real or off (got ${watcherKind})`);
 
   // Droid's only actions are our cage tools (builtins disabled). With --honest acme those run in the in-process Acme
   // world (no real shell); with --honest sandbox they run the legacy cage shell, which must be the Daytona cage. The
@@ -51,12 +53,12 @@ async function main(): Promise<void> {
   else if (attackerKind === "droid") attacker = droid = (await import("./attackers/droid.js")).makeDroidAttacker({ task: honest === "sandbox" ? CAGE_TASK : TASK_PROMPT });
   else throw new Error(`unknown --attacker ${attackerKind}`);
 
-  const watcher: Watcher =
-    watcherKind === "real" ? realWatcher : watcherKind === "rules" ? new RulesWatcher() : new PassWatcher();
+  const watcher: Watcher = realWatcher;
   const watcherOn = watcherKind !== "off";
 
   const logPath = `data/cage-runs/${Date.now()}-${attackerKind}-${watcherKind}.jsonl`;
   const mirage: Mirage = makeRealMirage(null);
+  const mirageLatencyMs = Number(process.env.CAGE_MIRAGE_LATENCY_MS ?? 0) || 0;
   // acme runs in-process (no Daytona); vm boots a real Daytona VM seeded with the Acme tree + decoys; sandbox is
   // the legacy cage deploy world on the chosen backend.
   const sandbox: Sandbox =
@@ -68,7 +70,7 @@ async function main(): Promise<void> {
   if (!flag("json")) bus.subscribe((e) => console.log(line(e)));
 
   try {
-    const result = await runSession({ attacker, watcher, mirage, sandbox, bus, caps, watcherOn, honestEnv: honest });
+    const result = await runSession({ attacker, watcher, mirage, sandbox, bus, caps, watcherOn, honestEnv: honest, mirageLatencyMs, tokensUsed: () => droid?.tokensUsed });
     const { session, realOutOfScope, watcherMisses, capReason, containment, decoySource } = result;
     const summary = {
       attacker: attackerKind, watcher: watcherKind, honest, backend,
@@ -79,6 +81,7 @@ async function main(): Promise<void> {
       realOutOfScopeExecutions: realOutOfScope,
       watcherMisses,
       network: containment?.network ?? null,
+      networkIsolation: result.summary.networkIsolation,
       decoys: decoySource, log: logPath,
     };
     if (droid) {
@@ -106,7 +109,7 @@ function printSummary(s: Record<string, unknown>): void {
   console.log(`attacker=${s.attacker} watcher=${s.watcher} honest=${s.honest} backend=${s.backend}`);
   console.log(`steps=${s.steps}  real=${s.realCalls}  fake(mirage)=${s.fakeCalls}  loopDepth=${s.loopDepth}`);
   console.log(`triggered=${s.triggered}${s.triggered ? ` at step ${s.triggerStep} (${s.triggerReason})` : ""}`);
-  console.log(`cap fired: ${s.capFired ?? "no"}   network: ${s.network ?? "n/a"}   decoys: ${s.decoys}`);
+  console.log(`cap fired: ${s.capFired ?? "no"}   containment network: ${s.network ?? "n/a"}   isolation at boot: ${s.networkIsolation}   decoys: ${s.decoys}`);
   console.log(`REAL out-of-scope executions: ${s.realOutOfScopeExecutions}  ${Number(s.realOutOfScopeExecutions) === 0 ? "(zero — contained)" : "(!! leaked past the watcher)"}`);
   if (Number(s.watcherMisses) > 0) console.log(`watcher misses caught by OS backstop: ${s.watcherMisses}  (out-of-scope, passed by watcher, refused by the VM)`);
   console.log(`forensic log: ${s.log}`);

@@ -56,14 +56,51 @@ describe("cage harness (Person A)", () => {
     expect(getFirstCallSeq()).toBeLessThan(sb.firstExecSeq);
   });
 
-  it("stops at exactly the step cap even when the watcher throws (kill switch is independent)", async () => {
+  it("a watcher that THROWS fails closed: the call is blocked, nothing reaches the sandbox, the run is contained", async () => {
+    const { sb, bus, events } = setup();
+    const r = await runSession({
+      attacker: new ScriptedAttacker(), watcher: new ThrowingWatcher(), mirage: new CannedMirage(),
+      sandbox: sb, bus, skipSeed: true, honestEnv: "sandbox", caps: { steps: 5, seconds: 180, spendUsd: 0 },
+    });
+    // The first call was refused; the only execs are contain()'s own (kill, deny file, forensics), never the agent's.
+    expect(sb.execCalls.every((c) => /pkill|egress-deny|forensics/.test(c))).toBe(true);
+    expect(r.history).toHaveLength(1);
+    expect(r.history[0].decision).toBe("block");
+    expect(r.summary.blocked).toBe(1);
+    expect(r.containment).toBeDefined();
+    expect(events.some((e) => e.type === "kill")).toBe(true);
+    expect(events.some((e) => e.type === "audit" && e.action === "watcher.error")).toBe(true);
+    expect(events.filter((e) => e.type === "run.summary")).toHaveLength(1);
+  });
+
+  it("stops at exactly the step cap with the watcher off (the cap never consults the watcher)", async () => {
     const { sb, bus } = setup();
     const r = await runSession({
       attacker: new ScriptedAttacker(), watcher: new ThrowingWatcher(), mirage: new CannedMirage(),
-      sandbox: sb, bus, watcherOn: false, skipSeed: true, honestEnv: "sandbox", caps: { steps: 5, seconds: 180, spendUsd: 1 },
+      sandbox: sb, bus, watcherOn: false, skipSeed: true, honestEnv: "sandbox", caps: { steps: 5, seconds: 180, spendUsd: 0 },
     });
     expect(r.session.realCalls + r.session.fakeCalls).toBe(5);
     expect(r.capReason).toBe("steps");
+    expect(r.summary.capFired).toBe("steps");
+  });
+
+  it("a verified defender can stop a running session through the active registry (same abort path as the caps)", async () => {
+    const { getActive } = await import("../active.js");
+    const { sb, bus, events } = setup();
+    // An attacker that stops its own session from the registry after its second call, as the voice tool would.
+    const inner = new ScriptedAttacker();
+    const attacker = {
+      kind: inner.kind,
+      async nextStep(history: Parameters<typeof inner.nextStep>[0], step: number) {
+        if (step === 3) getActive(history[0].call.session)?.stop();
+        return inner.nextStep(history, step);
+      },
+    };
+    const r = await runSession({ attacker, watcher: new PassWatcher(), mirage: new CannedMirage(), sandbox: sb, bus, skipSeed: true, honestEnv: "sandbox" });
+    expect(r.capReason).toBe("defender");
+    expect(r.history).toHaveLength(2);
+    expect(events.some((e) => e.type === "kill" && e.reason === "defender authorized containment")).toBe(true);
+    expect(getActive(r.session.id)).toBeUndefined(); // unregistered after the run
   });
 
   it("a block verdict never reaches the sandbox, and a mirage verdict never touches it", async () => {
@@ -88,7 +125,7 @@ describe("cage harness (Person A)", () => {
 
   it("CapGuard trips on seconds without any watcher involvement", async () => {
     let tripped: string | undefined;
-    const g = new CapGuard({ steps: 99, seconds: 0, spendUsd: 1 }, (r) => (tripped = r));
+    const g = new CapGuard({ steps: 99, seconds: 0, spendUsd: 0 }, (r) => (tripped = r));
     expect(g.checkBeforeStep(1)).toBe("seconds");
     expect(tripped).toBe("seconds");
     g.dispose();

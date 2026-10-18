@@ -6,12 +6,14 @@ tools — so it works on Windows and needs no API keys.
 
 ## Dashboard
 
-Start the server (`npm run dev`) and open **http://localhost:8787/mirage.html**.
-Two buttons: **Run (watcher ON)** and **Run (watcher OFF)** — the contrast the pitch needs.
-The band turns red on the first boundary crossing; tiles show real-vs-fake split, loop depth,
-felt progress, and the headline **real out-of-scope access** count (0 when the watcher is on).
+Start the server (`npm run dev`) and open **http://localhost:8787/** → *Enter the sandbox* (`/fleet.html`).
+The fleet page launches `POST /cage/fleet/start?mode=live|mixed|scripted&n=N` (add `&watcher=off` for the contrast
+run). Each session ends with a `run.summary` event (real-vs-fake split, loop depth, trigger step + reason, and the
+headline **real out-of-scope access** count, computed by the honest env's referee, 0 when the watcher is on); its
+forensic JSONL is downloadable at `GET /cage/runs/:session`.
 
-The standalone mock run exists so the dashboard works before the cage (A) and watcher (B) land.
+`POST /mirage/mock/start` still drives a scripted run through `MirageEngine` for tests and the voice lane's
+offline notification smoke; it is not the demo path.
 
 ## The seam for Person A (cage) and Person B (watcher)
 
@@ -69,5 +71,6 @@ is computed from the honest env, never from the watcher).
 ## Endpoints
 
 - `GET /mirage/info` — task prompt, scope, ledger path
-- `POST /mirage/mock/start?watcher=on|off&stepMs=700` — drive a mock run
-- `GET /mirage/forensics` / `GET /mirage/forensics/:id` — the forensic record
+- `POST /mirage/mock/start?watcher=on|off&stepMs=700` — drive a mock run (tests / offline smoke)
+- `GET /mirage/forensics` / `GET /mirage/forensics/:id` — the `run.summary` of the latest / a given cage session
+- `GET /cage/runs`, `GET /cage/runs/:session` (server/index.ts) — list / download the host-side forensic JSONL

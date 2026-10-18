@@ -24,8 +24,13 @@ export class VmWorld implements Sandbox {
   /** Report the backstop so the CLI/fleet can show it. The OS-user lockdown isn't available on a non-root tier;
    *  the harness scope guard is what enforces scope below the watcher. */
   readonly backstop: BackstopMode = "scope-guard";
+  /** "native" = Daytona's network block was applied at creation; "simulated" = the tier refused it, so the VM keeps
+   *  its route out and only the harness scope guard + the watcher stand between the agent and it. Reported, never assumed. */
+  readonly networkIsolation: "native" | "simulated";
 
-  private constructor(readonly id: string, private box: DaytonaBox, private base: string) {}
+  private constructor(readonly id: string, private box: DaytonaBox, private base: string, networkIsolation: "native" | "simulated") {
+    this.networkIsolation = networkIsolation;
+  }
 
   /** Logical in-scope dir mapped onto the VM's writable home (e.g. /home/daytona/workspace). */
   private get workspace() { return `${this.base}/workspace`; }
@@ -46,7 +51,12 @@ export class VmWorld implements Sandbox {
     // A scenario's own files (paths relative to /workspace) are seeded alongside the base tree.
     for (const f of extraFiles) files.push({ source: Buffer.from(f.content), destination: `${base}/workspace/${f.path.replace(/^\/+/, "")}` });
     await limit(box.fs.uploadFiles(files), 60_000, "seed in-scope tree");
-    return new VmWorld(id, box, base);
+    // CLAUDE.md: the cage has no route out. Block egress at creation, not only at containment. Daytona's control plane
+    // (how we exec/upload) is unaffected by networkBlockAll. If the tier refuses, record it honestly.
+    let isolation: "native" | "simulated" = "simulated";
+    try { await limit(box.updateNetworkSettings({ networkBlockAll: true }), 30_000, "block network"); isolation = "native"; }
+    catch { /* refused: tier < 3 or API change; reported as simulated */ }
+    return new VmWorld(id, box, base, isolation);
   }
 
   /** Run a command in the in-scope dir. The logical "/workspace" is translated onto the VM's real home path. */

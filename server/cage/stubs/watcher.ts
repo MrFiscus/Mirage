@@ -1,18 +1,20 @@
-// MOCK watchers (Person A). The integration seam for Person B: the harness takes any Watcher, so B's real decide()
-// drops in with no harness change. Nothing here is the real scope decision.
+// TEST DOUBLES only (Person A). The real watcher is server/watcher (wired in wire.ts as realWatcher) and is what the
+// CLI, the server and the fleet use. These two exist so the harness unit tests and the kill test can run the loop
+// without the real watcher: PassWatcher (contrast condition) and RulesWatcher (a rules-only stand-in over the legacy
+// sandbox world's outOfScope). Neither is reachable from a product path.
 import { DECOY_KEY, outOfScope } from "../../defense/rogue-agent.js";
 import { commandOf } from "../task.js";
 import type { CageToolCall, Session, Verdict, Watcher } from "../types.js";
 
-/** Always passes. Today's stub. */
+/** Always passes (the "no defense" contrast condition in tests). */
 export class PassWatcher implements Watcher {
   async decide(_call: CageToolCall, _session: Session): Promise<Verdict> {
     return { decision: "pass", layer: "rules", score: 0, reasons: ["stub watcher: always pass"], floor: 0 };
   }
 }
 
-/** Temporary rules-only adapter over outOfScope(), so we can demo pass → mirage → block before Person B lands.
- *  Delete when the real watcher arrives. */
+/** Rules-only stand-in over the legacy sandbox world's outOfScope(), for cage.test.ts (which still exercises the
+ *  relative-path "sandbox" world). Not the product watcher. */
 export class RulesWatcher implements Watcher {
   async decide(call: CageToolCall, _session: Session): Promise<Verdict> {
     const cmd = commandOf(call);

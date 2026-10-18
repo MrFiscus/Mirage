@@ -16,7 +16,8 @@
     "watcher:eval": "tsx server/watcher/eval/run.ts",
     "cage": "tsx server/cage/cli.ts",
     "cage:killtest": "tsx server/cage/killtest.ts",
-    "cage:fleet": "tsx server/cage/fleet-cli.ts"
+    "cage:fleet": "tsx server/cage/fleet-cli.ts",
+    "demo:check": "tsx server/cage/demo-check.ts"
   },
   "dependencies": {
     "@daytonaio/sdk": "^0.225.0",

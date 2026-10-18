@@ -1,18 +1,24 @@
-// Containment actions (Person A). Run on a cap trip or a `block`. None of this asks the watcher or a model.
-// 1. Kill the agent's leftover processes. 2. Cut the network. 3. Preserve forensics.
-// Network cut: Daytona's native updateNetworkSettings needs Tier 3+; until the kill test confirms our tier we use the
-// simulated deny file, which the decoy sink (sim/agent.cjs) already enforces (every request after it gets 403).
+// Containment actions (Person A). Run on a cap trip, a `block`, or a verified defender's say-so. None of this asks
+// the watcher or a model. 1. Kill the agent's leftover processes. 2. Cut the network. 3. Preserve forensics.
+// Network cut: Daytona's native updateNetworkSettings is tried first (Tier 3+). If refused we write a simulated deny
+// file; only the legacy sandbox world's sink (sim/agent.cjs) enforces that file, so in the vm/acme worlds it is a
+// marker, not a block, and the result says so. Against the in-process env there is no network at all: "n/a".
 import type { Sandbox } from "../defense/sandbox/index.js";
 
 export interface ContainmentResult {
   processesKilled: boolean;
-  network: "daytona-native" | "simulated-deny-file" | "failed";
+  network: "daytona-native" | "simulated-deny-file" | "n/a (in-process env)" | "failed";
   forensicsPreserved: boolean;
   notes: string[];
 }
 
 export async function contain(sb: Sandbox): Promise<ContainmentResult> {
   const notes: string[] = [];
+  if (sb.id === "null") {
+    // NullSandbox: the honest env ran in-process; there is no process tree or network to cut. Say so instead of
+    // reporting a containment that did nothing.
+    return { processesKilled: false, network: "n/a (in-process env)", forensicsPreserved: true, notes: ["in-process env: nothing to contain; the forensic log is host-side"] };
+  }
   const killed = await sb.exec(`pkill -f "agent-keepalive-$BATMAN_SANDBOX_ID" ; true`);
   const processesKilled = killed.code === 0;
 

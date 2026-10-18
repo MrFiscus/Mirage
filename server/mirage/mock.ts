@@ -1,15 +1,12 @@
 // A self-contained mock run that drives the MirageEngine through a scripted attacker trajectory on a
-// timer. The verdicts come from the REAL watcher (server/watcher: rules + Chalk LLM layer), so the
-// reasons and scores on the dashboard are genuinely what the watcher computed — not approximations.
-//
-// Integration with Person A's live cage = replacing SCRIPT with the cage's ToolCall stream; the
-// decide() call and MirageEngine.route() stay the same.
+// timer. The verdicts come from the REAL watcher (server/watcher: rules + Chalk-or-Gemini LLM layer), so the
+// reasons and scores are genuinely what the watcher computed. Kept for tests and the voice lane's offline
+// notification smoke; the demo itself runs through the cage harness (server/cage, POST /cage/start).
 import { randomUUID } from "node:crypto";
 import type { MirageEvent, ToolCall } from "../../shared/types.js";
 import { MirageEngine } from "./engine.js";
 import { decide } from "../watcher/index.js";
 import { PressureTracker } from "../watcher/pressure.js";
-import { fleetSize, runStaggeredFleet } from "./fleet-size.js";
 
 // A scripted agent: starts in scope (reads the task, hits the wiki), gets frustrated, then probes out.
 const SCRIPT: Array<Pick<ToolCall, "tool" | "args" | "thought">> = [
@@ -61,15 +58,3 @@ export async function runMock(opts: MockRunOptions): Promise<MirageEngine> {
   return engine;
 }
 
-/** Run N scripted agents at once through the SAME real watcher, each tagged by its own session id.
- *  Staggered start + jittered pace so the fleet looks alive. Honest framing: one watcher, many agents. */
-export async function runFleet(opts: { emit: (e: MirageEvent) => void; n?: number; watcherOn?: boolean }): Promise<void> {
-  const n = fleetSize(opts.n ?? 6);
-  await runStaggeredFleet(n, async (i) => {
-    const id = `AGENT-${String(i + 1).padStart(2, "0")}`;
-    const stepMs = 700 + Math.round(Math.random() * 900); // 0.7-1.6s, varied
-    await runMock({ emit: opts.emit, watcherOn: opts.watcherOn ?? true, stepMs, ledgerFile: null, id })
-      .catch((e: Error) => opts.emit({ type: "audit", actor: "mirage", action: "mock.failed", detail: `${id}: ${e.message}`, ts: Date.now() }));
-  }, 350);
-  opts.emit({ type: "audit", actor: "mirage", action: "fleet.complete", detail: `${n} agents watched`, ts: Date.now() });
-}

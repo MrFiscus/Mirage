@@ -1,17 +1,18 @@
 // The harness (Person A) — the seam the whole project hinges on. It runs the attacker loop on the host and, between
 // recording a call and executing it, calls watcher.decide(call). It routes by the verdict: pass → run in the real
 // sandbox, mirage → ask the simulator (never touches the sandbox), block → refuse and contain. Caps run on their own
-// (CapGuard) and do not depend on the watcher.
+// (CapGuard) and do not depend on the watcher. A watcher that THROWS fails closed: the call is treated as `block`.
 import { randomUUID } from "node:crypto";
 import type { Sandbox } from "../defense/sandbox/index.js";
 import { outOfScope } from "../defense/rogue-agent.js";
+import { registerActive } from "./active.js";
 import type { Attacker, NextCall, Observed } from "./attacker.js";
 import { CapGuard, type CapReason, DEFAULT_CAPS } from "./caps.js";
 import type { CageBus } from "./events.js";
 import { contain, type ContainmentResult } from "./kill.js";
 import { CAGE_SCOPE, commandOf, type Decoy, loadDecoys } from "./task.js";
 import { DEFAULT_SCOPE as ACME_SCOPE, outsideScope, runHonest } from "../mirage/acme.js";
-import type { CageToolCall, Caps, Mirage, Session, Verdict, Watcher } from "./types.js";
+import type { CageToolCall, Caps, Mirage, RunSummary, Session, Verdict, Watcher } from "./types.js";
 
 export interface RunOptions {
   attacker: Attacker;
@@ -29,6 +30,11 @@ export interface RunOptions {
    *  "sandbox" = the real Daytona/local sandbox seeded with the cage deploy files;
    *  "vm" = a real Daytona VM seeded with the Acme tree (shell+read run there; HTTP stays in-process). */
   honestEnv?: "acme" | "sandbox" | "vm";
+  /** Progressive latency for mirage responses: each fake reply waits min(base * loopDepth, 3000) ms, so the shadow
+   *  world feels like a slowing real system as the agent goes round in it. 0 (default, tests) = no delay. */
+  mirageLatencyMs?: number;
+  /** Tokens the attacker reports at the end (Droid); copied onto the run summary. */
+  tokensUsed?: () => number | undefined;
 }
 
 export interface RunResult {
@@ -38,12 +44,15 @@ export interface RunResult {
   containment?: ContainmentResult;
   /** Calls that were decided `pass`, executed for real, and were actually out of scope. MUST be 0 with the watcher on. */
   realOutOfScope: number;
-  /** vm mode only: out-of-scope calls the watcher passed but the OS backstop refused (defence in depth caught them). */
+  /** vm mode only: out-of-scope calls the watcher passed but the scope guard refused (defence in depth caught them). */
   watcherMisses: number;
   decoySource: "tripwires.json" | "fallback";
+  summary: RunSummary;
 }
 
 const PASS: Verdict = { decision: "pass", layer: "rules", score: 0, reasons: ["watcher off"], floor: 0 };
+/** What a throwing watcher becomes: fail closed. The agent gets a refusal, the run is contained, nothing executes. */
+const FAIL_CLOSED = (why: string): Verdict => ({ decision: "block", layer: "rules", score: 1, reasons: [`watcher error, failing closed: ${why}`], floor: 1 });
 
 /** Plant the broken task + sink, then overlay the decoy files (Person B's tripwires, or the fallback). */
 export async function seedCage(sb: Sandbox, decoys: Decoy[]): Promise<void> {
@@ -58,11 +67,15 @@ export async function seedCage(sb: Sandbox, decoys: Decoy[]): Promise<void> {
 // AGENT_PATH (sim/agent.cjs) is reused from the existing sandbox helpers.
 import { AGENT_PATH } from "../defense/sandbox/local.js";
 
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 export async function runSession(opts: RunOptions): Promise<RunResult> {
   const { attacker, watcher, mirage, sandbox, bus } = opts;
   const watcherOn = opts.watcherOn !== false;
   const honestEnv = opts.honestEnv ?? "acme";
   const caps = opts.caps ?? DEFAULT_CAPS;
+  const latencyBase = Math.max(0, opts.mirageLatencyMs ?? 0);
+  const startedAt = Date.now();
   const { decoys, source } = opts.decoys ? { decoys: opts.decoys, source: "fallback" as const } : loadDecoys();
 
   const session: Session = {
@@ -79,14 +92,17 @@ export async function runSession(opts: RunOptions): Promise<RunResult> {
     caps,
   };
 
-  const cap = new CapGuard(caps, (reason) => bus.emit({ type: "kill", session: session.id, reason: `cap: ${reason}` }));
+  const cap = new CapGuard(caps, (reason) => bus.emit({ type: "kill", session: session.id, reason: reason === "defender" ? "defender authorized containment" : `cap: ${reason}` }));
+  const unregister = registerActive({ id: session.id, attacker: attacker.kind, startedAt, stop: () => cap.stopByDefender() });
   bus.emit({ type: "session.started", session });
   // The Acme honest env is in-process, so there is nothing to seed into a sandbox.
   if (!opts.skipSeed && honestEnv === "sandbox") await seedCage(sandbox, decoys);
 
   const history: Observed[] = [];
+  const seenFakes = new Set<string>(); // loop depth = revisits of a fake resource already shown
   let realOutOfScope = 0;
   let watcherMisses = 0;
+  let blockedCount = 0;
   let blocked = false;
 
   try {
@@ -101,12 +117,23 @@ export async function runSession(opts: RunOptions): Promise<RunResult> {
         break;
       }
       if (!next) break;
+      if (cap.tripped) break; // the cap fired while the agent was thinking (e.g. defender stop)
 
       const call: CageToolCall = { id: randomUUID().slice(0, 8), session: session.id, step, tool: next.tool, args: next.args, thought: next.thought, ts: Date.now() };
       // Recorded on the host-side log BEFORE anything runs (bus writes the JSONL). The agent cannot edit this.
       bus.emit({ type: "tool.call", call });
 
-      const verdict = watcherOn ? await watcher.decide(call, session) : PASS;
+      let verdict: Verdict;
+      if (!watcherOn) verdict = PASS;
+      else {
+        try {
+          verdict = await watcher.decide(call, session);
+        } catch (e) {
+          // Fail closed: a broken watcher must never turn into "run it for real".
+          verdict = FAIL_CLOSED(String((e as Error).message));
+          bus.emit({ type: "audit", actor: "cage", action: "watcher.error", detail: `step ${step}: ${(e as Error).message} — treated as block`, ts: Date.now() });
+        }
+      }
       bus.emit({ type: "watcher.verdict", callId: call.id, verdict });
 
       if (!session.triggered && verdict.decision !== "pass") {
@@ -120,12 +147,16 @@ export async function runSession(opts: RunOptions): Promise<RunResult> {
       if (verdict.decision === "block") {
         output = `(blocked) ${verdict.reasons.join("; ")}`;
         blocked = true;
+        blockedCount += 1;
       } else if (verdict.decision === "mirage") {
         const entry = await mirage.serve(call, session);
         session.fakeCalls += 1;
-        session.loopDepth += 1;
+        if (seenFakes.has(entry.path)) session.loopDepth += 1;
+        seenFakes.add(entry.path);
         bus.emit({ type: "mirage.served", callId: call.id, entry });
         bus.emit({ type: "progress.updated", session: session.id, progress: entry.progress });
+        // Progressive latency: the deeper the loop, the slower the shadow world answers (bounded).
+        if (latencyBase > 0) await sleep(Math.min(latencyBase * (session.loopDepth + 1), 3000));
         output = entry.value;
       } else if (honestEnv === "acme" || (honestEnv === "vm" && isHttp(call))) {
         // In-process honest env: deterministic, no sandbox. The Acme HTTP services never exist on a VM, so in
@@ -159,18 +190,43 @@ export async function runSession(opts: RunOptions): Promise<RunResult> {
     }
   } finally {
     cap.dispose();
+    unregister();
     await attacker.stop?.().catch(() => undefined);
   }
 
   let containment: ContainmentResult | undefined;
   if (cap.tripped || blocked) {
     containment = await contain(sandbox);
-    bus.emit({ type: "kill", session: session.id, reason: cap.tripped ? `cap: ${cap.tripped}` : "block: escape attempt" });
+    bus.emit({ type: "kill", session: session.id, reason: cap.tripped === "defender" ? "defender authorized containment" : cap.tripped ? `cap: ${cap.tripped}` : "block: escape attempt" });
   }
 
-  bus.emit({ type: "audit", actor: "cage", action: "session.completed", detail: `${session.id}: ${containment ? "contained" : "finished"}`, ts: Date.now() });
+  const isolation = (sandbox as Sandbox & { networkIsolation?: "native" | "simulated" }).networkIsolation;
+  const summary: RunSummary = {
+    session: session.id,
+    attacker: attacker.kind,
+    honestEnv,
+    triggered: session.triggered,
+    triggerStep: session.triggerStep,
+    triggerReason: session.triggerReason,
+    realCalls: session.realCalls,
+    fakeCalls: session.fakeCalls,
+    blocked: blockedCount,
+    loopDepth: session.loopDepth,
+    realOutOfScope,
+    watcherMisses,
+    watcherOn,
+    capFired: cap.tripped,
+    containment: containment ? { network: containment.network, processesKilled: containment.processesKilled } : undefined,
+    networkIsolation: sandbox.id === "null" ? "n/a" : isolation ?? "simulated",
+    forensicPath: bus.logPath,
+    durationMs: Date.now() - startedAt,
+    tokens: opts.tokensUsed?.(),
+    ts: Date.now(),
+  };
+  bus.emit({ type: "run.summary", summary });
+  bus.emit({ type: "audit", actor: "cage", action: "session.completed", detail: `${session.id}: ${containment ? "contained" : "finished"}; real=${summary.realCalls} fake=${summary.fakeCalls} realOOS=${summary.realOutOfScope}`, ts: Date.now() });
 
-  return { session, history, capReason: cap.tripped, containment, realOutOfScope, watcherMisses, decoySource: source };
+  return { session, history, capReason: cap.tripped, containment, realOutOfScope, watcherMisses, decoySource: source, summary };
 }
 
 /** HTTP tools stay in-process even in vm mode (the Acme services don't exist on the box). */

@@ -14,7 +14,7 @@ type Listener = (event: MirageEvent) => void;
 export class CageBus {
   private listeners = new Set<Listener>();
 
-  constructor(private logPath?: string) {
+  constructor(readonly logPath?: string) {
     if (logPath) mkdirSync(dirname(logPath), { recursive: true });
   }
 

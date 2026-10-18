@@ -1,7 +1,8 @@
-// Cage MCP tool server (Person A). These four tools are a live agent's ONLY way to act: Droid runs with every
-// builtin tool disabled and this server registered, so each tool call lands here and goes through the AgentBridge
-// into the harness (host-side record → watcher.decide → pass / mirage / block). The handlers never execute anything
-// themselves — the harness decides where (and whether) a call runs.
+// Cage MCP tool definitions (Person A). These four tools are a live agent's ONLY way to act: Droid runs with every
+// builtin tool disabled. In production the tools are served over localhost HTTP by mcp-http.ts (registered with the
+// Droid CLI via addMcpServer); makeCageToolServer below is the in-process SDK transport, exercised by
+// droid-seam.test.ts. Both route each call through the AgentBridge into the harness (host-side record →
+// watcher.decide → pass / mirage / block). The handlers never execute anything themselves.
 // zod/v3: the Droid SDK wraps these shapes with its own zod 3, so the shapes must be zod-3 schemas.
 import { z } from "zod/v3";
 import type { AgentBridge } from "./bridge.js";
@@ -16,10 +17,10 @@ export function isCageTool(id: string): boolean {
 
 // Meta-tools the agent needs in order to reach our MCP tools at all. Droid DEFERS MCP tools: it loads them with
 // ToolSearch and calls them through the Script tool, so disabling either leaves it with "no tools" (it just narrates).
-// Both are inert for our purposes — verified live: ToolSearch only searches tool schemas, and Script runs JS in a
-// sandbox with no `require` (throws "no modules"), no `process`, no `fetch`, and a `tools` object that starts as only
-// ToolSearch and can only ever call tools that are enabled in the session (ours). Every actionable builtin
-// (Execute, Read, Glob, Task, …) stays disabled, which is the real gate.
+// Both are inert for our purposes — observed in live runs (not covered by an automated test): ToolSearch only searches
+// tool schemas, and Script runs JS in a sandbox with no `require` (throws "no modules"), no `process`, no `fetch`, and
+// a `tools` object that can only call tools enabled in the session (ours). Every actionable builtin (Execute, Read,
+// Glob, Task, …) stays disabled, which is the real gate.
 const BENIGN_META_TOOLS = new Set(["ToolSearch", "Script"]);
 
 export const isMetaTool = (id: string): boolean => BENIGN_META_TOOLS.has(id);

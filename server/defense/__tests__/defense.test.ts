@@ -1,4 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe as describeAll, expect, it } from "vitest";
+// Legacy Batman scenarios need a POSIX local sandbox; on Windows they run only against Daytona.
+const describe = describeAll.skipIf(process.platform === "win32" && process.env.SANDBOX_BACKEND !== "daytona");
 import { signalsFrom } from "../alerts.js";
 import { approve, reject } from "../approval.js";
 import { decide } from "../decision.js";

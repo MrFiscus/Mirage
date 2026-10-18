@@ -1,19 +1,20 @@
-// Independent kill switch (Person A). Enforces step / wall-clock / spend caps WITHOUT calling the watcher or
-// persuading any model — a hard stop that holds even if the watcher is stubbed out or throws. CLAUDE.md: "The kill
-// switch (network cut + budget caps) does not depend on the watcher."
+// Independent kill switch (Person A). Enforces step / wall-clock caps WITHOUT calling the watcher or persuading any
+// model — a hard stop that holds even if the watcher is stubbed out or throws. CLAUDE.md: "The kill switch (network
+// cut + budget caps) does not depend on the watcher." Spend: there is NO dollar cap here (we never see a billed cost);
+// the honest spend control is the fleet token budget (fleet.ts). Caps.spendUsd stays on the shared Session type for
+// display only and is not enforced. A verified defender can also stop a session from the call (reason "defender").
 import type { Caps } from "./types.js";
 
 export const DEFAULT_CAPS: Caps = {
   steps: Number(process.env.CAGE_MAX_STEPS) || 40,
   seconds: Number(process.env.CAGE_MAX_SECONDS) || 180,
-  spendUsd: Number(process.env.CAGE_MAX_SPEND_USD) || 1,
+  spendUsd: 0, // not enforced; see header
 };
 
-export type CapReason = "steps" | "seconds" | "spend";
+export type CapReason = "steps" | "seconds" | "defender";
 
 export class CapGuard {
   private start = Date.now();
-  private spent = 0;
   private timer?: NodeJS.Timeout;
   readonly abort = new AbortController();
   tripped?: CapReason;
@@ -29,22 +30,16 @@ export class CapGuard {
     if (this.tripped) return this.tripped;
     if (stepAboutToRun > this.caps.steps) return this.trip("steps");
     if (this.elapsedMs() >= this.caps.seconds * 1000) return this.trip("seconds");
-    if (this.spent >= this.caps.spendUsd) return this.trip("spend");
     return undefined;
   }
 
-  /** Record spend reported by a model attacker (Droid/Grok). Scripted runs report 0. */
-  addSpend(usd: number): void {
-    if (usd > 0) this.spent += usd;
-    if (this.spent >= this.caps.spendUsd) this.trip("spend");
+  /** External stop through the same abort path: a verified defender authorized containment. */
+  stopByDefender(): void {
+    this.trip("defender");
   }
 
   elapsedMs(): number {
     return Date.now() - this.start;
-  }
-
-  spendUsd(): number {
-    return this.spent;
   }
 
   private trip(reason: CapReason): CapReason {

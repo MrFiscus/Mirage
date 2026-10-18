@@ -37,7 +37,7 @@ const tokenBudget = arg("token-budget") !== undefined ? Number(arg("token-budget
 const caps = {
   steps: Number(arg("steps")) || 40,
   seconds: Number(arg("seconds")) || 150,
-  spendUsd: Number(arg("spend")) || Number(process.env.CAGE_MAX_SPEND_USD) || 1,
+  spendUsd: 0, // not enforced: --token-budget is the spend control
 };
 // Quiet by default once the fleet is big: print only crossings, summaries and progress.
 const verbose = flag("verbose") || (agentsN ?? ids.length + rogue.length) <= 12;
@@ -130,7 +130,8 @@ function report(results: FleetResult[], requested: number): void {
   }
   const tokens = results.reduce((n, r) => n + r.tokens, 0);
   const sec = ((Date.now() - started) / 1000).toFixed(0);
-  console.log(`\nran ${results.length} of ${requested} requested${results.length < requested ? " (stopped early)" : ""}; ${sec}s; tokens used: ${tokens || "n/a"}${tokenBudget ? ` of budget ${tokenBudget}` : ""}`);
+  const failed = results.filter((r) => r.agentError && r.steps === 0).length;
+  console.log(`\nran ${results.length - failed} of ${requested} requested${failed ? ` (${failed} failed before running, kept as rows)` : ""}${results.length < requested ? " (stopped early)" : ""}; ${sec}s; tokens used: ${tokens || "n/a"}${tokenBudget ? ` of budget ${tokenBudget}` : ""}`);
   console.log(`real out-of-scope executions (must be 0): ${results.reduce((n, r) => n + r.realOutOfScope, 0)}   watcher misses caught by guard: ${results.reduce((n, r) => n + r.watcherMisses, 0)}`);
   console.log(`per-agent records: ${logPath}`);
   console.log("────────────────────────────────────────────────────────────────────────\n");
