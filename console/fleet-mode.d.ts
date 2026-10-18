@@ -6,6 +6,9 @@ export interface Cohort { kind: AttackerBadge["kind"]; label: string; agents: nu
 
 export const FLEET_MODES: FleetModeOption[];
 export function modeById(id: string): FleetModeOption | undefined;
+export const HOST_NAMES: string[];
+export const HOST_DOMAIN: string;
+export function hostnameFor(index: number): string;
 export function modeSplit(mode: string, n: number): { live: number; simulated: number };
 export function launchPath(mode: string, n: number, watcherOff?: boolean): string;
 export function attackerBadge(attacker: unknown): AttackerBadge;

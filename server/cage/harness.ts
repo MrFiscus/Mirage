@@ -35,6 +35,8 @@ export interface RunOptions {
   mirageLatencyMs?: number;
   /** Tokens the attacker reports at the end (Droid); copied onto the run summary. */
   tokensUsed?: () => number | undefined;
+  /** Display label for the machine (fleet: "ava.PC@coffee.org"); shown on the dashboard tile. */
+  label?: string;
 }
 
 export interface RunResult {
@@ -81,6 +83,7 @@ export async function runSession(opts: RunOptions): Promise<RunResult> {
   const session: Session = {
     id: randomUUID().slice(0, 8),
     attacker: attacker.kind,
+    label: opts.label,
     // The watcher and the honest env must agree on scope: the Acme world is absolute (/workspace), the
     // sandbox world is relative (workspace/). Pick the scope that matches where `pass` calls run.
     scope: honestEnv === "sandbox" ? CAGE_SCOPE : ACME_SCOPE,

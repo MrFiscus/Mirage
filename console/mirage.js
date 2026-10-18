@@ -1,5 +1,5 @@
 // The console renders host-side Mirage events. Launching is always an explicit action.
-import { FLEET_MODES, modeById, modeSplit, launchPath, attackerBadge, cohortSummary, loopDepthFromActions, compareSummary } from './fleet-mode.js';
+import { FLEET_MODES, modeById, modeSplit, launchPath, attackerBadge, cohortSummary, loopDepthFromActions, compareSummary, hostnameFor } from './fleet-mode.js';
 
 const $ = (selector) => document.querySelector(selector);
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[c]));
@@ -217,7 +217,7 @@ function statusOf(box) {
 function getBox(id) {
   if (state.boxes.has(id)) return state.boxes.get(id);
   // attacker is filled from session.started (session.attacker) and is the only source for the tile's badge
-  const box = { id, label: `VM-${pad(state.boxes.size + 1)}`, attacker: undefined, actions: [], moves: 0, mirage: 0, block: 0, stopped: false, realOutOfScope: null, loopDepth: 0, progress: 0, killReason: null, serves: new Map() };
+  const box = { id, label: hostnameFor(state.boxes.size), attacker: undefined, actions: [], moves: 0, mirage: 0, block: 0, stopped: false, realOutOfScope: null, loopDepth: 0, progress: 0, killReason: null, serves: new Map() };
   state.boxes.set(id, box);
   return box;
 }
@@ -238,7 +238,7 @@ function renderFleet() {
   if (state.filter === 'all') {
     for (let i = Math.max(begin, all.length); i < end; i++) {
       const done = state.phase === 'complete';
-      $('#fleet').insertAdjacentHTML('beforeend', `<div class="vm provisioning"><span class="vm-head"><span class="vm-identity"><span class="vm-icon">${icon('machine')}</span><span><b>VM-${pad(i + 1)}</b></span></span><span class="agent-status neutral">${done ? 'Unavailable' : 'Provisioning'}</span></span><div class="provision-body">${done ? '<span class="unavailable-mark">—</span>' : '<span class="loader"></span>'}${done ? '<span>No agent session received.</span>' : ''}</div></div>`);
+      $('#fleet').insertAdjacentHTML('beforeend', `<div class="vm provisioning"><span class="vm-head"><span class="vm-identity"><span class="vm-icon">${icon('machine')}</span><span><b>${esc(hostnameFor(i))}</b></span></span><span class="agent-status neutral">${done ? 'Unavailable' : 'Provisioning'}</span></span><div class="provision-body">${done ? '<span class="unavailable-mark">—</span>' : '<span class="loader"></span>'}${done ? '<span>No agent session received.</span>' : ''}</div></div>`);
     }
   }
   $('#filter-empty').hidden = state.filter !== 'mirage' || filtered.length > 0;
@@ -433,7 +433,9 @@ $('#new-run').onclick = () => {
 function handle(event) {
   if (state.view === 'setup') return;
   if (event.type === 'session.started') {
-    getBox(event.session.id).attacker = event.session.attacker;
+    const started = getBox(event.session.id);
+    started.attacker = event.session.attacker;
+    if (event.session.label) started.label = event.session.label; // the server's name wins over the positional one
     state.phase = state.phase === 'complete' ? 'complete' : 'running'; renderFleet(); renderStats();
   } else if (event.type === 'tool.call') {
     state.pending.set(event.call.id, event.call);

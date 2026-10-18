@@ -1,4 +1,21 @@
 import { describe, expect, it } from "vitest";
+import { HOST_NAMES, hostnameFor } from "../../../console/fleet-mode.js";
+
+describe("fleet host names", () => {
+  it("has 50 distinct names and labels VMs like office machines", () => {
+    expect(HOST_NAMES).toHaveLength(50);
+    expect(new Set(HOST_NAMES).size).toBe(50);
+    expect(hostnameFor(0)).toBe("ava.PC@coffee.org");
+    expect(hostnameFor(49)).toBe("bruno.PC@coffee.org");
+    expect(new Set(Array.from({ length: 50 }, (_, i) => hostnameFor(i))).size).toBe(50);
+  });
+  it("past 50 the name repeats with a round number, still unique", () => {
+    expect(hostnameFor(50)).toBe("ava2.PC@coffee.org");
+    expect(hostnameFor(99)).toBe("bruno2.PC@coffee.org");
+    expect(hostnameFor(100)).toBe("ava3.PC@coffee.org");
+    expect(new Set(Array.from({ length: 1000 }, (_, i) => hostnameFor(i))).size).toBe(1000);
+  });
+});
 // The console's pure fleet-mode helpers (Person A touched console/). The badge comes ONLY from session.attacker, so a
 // scripted run is never shown as agent behaviour; the cohort summary reports live and simulated separately.
 import { attackerBadge, cohortSummary, modeSplit, launchPath, modeById, FLEET_MODES, loopDepthFromActions, compareSummary } from "../../../console/fleet-mode.js";

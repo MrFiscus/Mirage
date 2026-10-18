@@ -25,6 +25,26 @@ export const FLEET_MODES = [
 
 export const modeById = (id) => FLEET_MODES.find((mode) => mode.id === id);
 
+/** Fifty machine owners, so a fleet reads like an office, not a numbered rack. Order is fixed: the Nth VM of a run
+ *  always gets the Nth name, so the dashboard's placeholders and the server's labels agree before any session exists. */
+export const HOST_NAMES = [
+  'ava', 'liam', 'noah', 'emma', 'mia', 'ethan', 'zoe', 'lucas', 'nora', 'leo',
+  'isla', 'owen', 'ruby', 'eli', 'maya', 'jude', 'ivy', 'finn', 'lena', 'kai',
+  'sara', 'theo', 'nina', 'max', 'cleo', 'hugo', 'rosa', 'ezra', 'june', 'felix',
+  'aria', 'milo', 'tess', 'otis', 'wren', 'rafa', 'elsa', 'cole', 'nell', 'remy',
+  'iris', 'luca', 'vera', 'arlo', 'maeve', 'jonah', 'pia', 'silas', 'dana', 'bruno',
+];
+export const HOST_DOMAIN = 'PC@coffee.org';
+
+/** Host label for the i-th VM (0-based): "ava.PC@coffee.org". Past 50 the name repeats with a round number:
+ *  "ava2.PC@coffee.org" for the 51st, "ava3" for the 101st, and so on. */
+export function hostnameFor(index) {
+  const i = Math.max(0, Math.floor(Number(index) || 0));
+  const name = HOST_NAMES[i % HOST_NAMES.length];
+  const round = Math.floor(i / HOST_NAMES.length) + 1;
+  return `${name}${round > 1 ? round : ''}.${HOST_DOMAIN}`;
+}
+
 /** How many live / simulated agents a mode yields for n. Mirrors modeSplit in server/cage/fleet-plan.ts. */
 export function modeSplit(mode, n) {
   if (mode === 'live') return { live: n, simulated: 0 };

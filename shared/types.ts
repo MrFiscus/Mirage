@@ -99,6 +99,8 @@ export interface Scope {
 export interface Session {
   id: string;
   attacker: Attacker;
+  /** Display label for the machine this session runs on, e.g. "ava.PC@coffee.org" (fleet runs). */
+  label?: string;
   scope: Scope;
   triggered: boolean;
   triggerStep?: number;

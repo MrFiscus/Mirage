@@ -21,6 +21,7 @@ import { TASK_PROMPT } from "../mirage/acme.js";
 import { makeRealMirage, NullSandbox, realWatcher } from "./wire.js";
 import { VmWorld } from "./world.js";
 import type { Caps } from "./types.js";
+import { hostnameFor } from "../../console/fleet-mode.js";
 
 export type FleetAttacker = "scripted" | "droid";
 export interface FleetMember {
@@ -113,7 +114,7 @@ export async function runCageFleet(opts: FleetOptions): Promise<FleetResult[]> {
   const watcherOn = opts.watcherOn !== false;
   const members = opts.members;
   const concurrency = Math.max(1, Math.floor(opts.concurrency ?? 10));
-  const width = Math.max(2, String(members.length).length);
+  const width = Math.max(2, String(members.length).length); // still used for the forensic file prefix
   const logDir = opts.logDir === null ? undefined : opts.logDir ?? `${CAGE_RUNS_DIR}/${Date.now()}-fleet`;
   if (logDir) mkdirSync(logDir, { recursive: true });
   const results: FleetResult[] = [];
@@ -146,7 +147,10 @@ export async function runCageFleet(opts: FleetOptions): Promise<FleetResult[]> {
 }
 
 async function runOne(member: FleetMember, index: number, width: number, ctx: { emit: (e: MirageEvent) => void; watcherOn: boolean; caps: Caps; logDir?: string; mirageLatencyMs?: number }): Promise<FleetResult> {
-  const label = `${member.honestEnv === "vm" ? "VM" : "AGENT"}-${String(index + 1).padStart(width, "0")}`;
+  // Machines are named like an office, not a rack: "ava.PC@coffee.org". Same roster the dashboard uses for its
+  // placeholders, so tile N is the same name before and after its session starts.
+  const label = hostnameFor(index);
+  const fileStem = `${String(index + 1).padStart(width, "0")}-${label.replace(/[^\w.-]+/g, "_")}`;
   const startedAt = Date.now();
   const scenario = member.scenario ? scenarioById(member.scenario) : undefined;
   // A member that never ran still gets a row (steps 0, agentError set) so N requested == N rows in the record.
@@ -180,13 +184,13 @@ async function runOne(member: FleetMember, index: number, width: number, ctx: { 
     const attacker: Attacker = droid ?? new ScriptedAttacker(scenario?.rogueScript ?? ACME_SCRIPT);
 
     // Host-side forensic log for THIS session: every tool.call is appended before it runs (events.ts).
-    const bus = new CageBus(ctx.logDir ? `${ctx.logDir}/${label}.jsonl` : undefined);
+    const bus = new CageBus(ctx.logDir ? `${ctx.logDir}/${fileStem}.jsonl` : undefined);
     bus.subscribe((e) => ctx.emit(e)); // forward this VM's cage events to the core bus (dashboard groups by session)
 
     const r = await runSession({
       attacker, watcher: realWatcher, mirage: makeRealMirage(null),
       sandbox, bus, watcherOn: ctx.watcherOn, caps: ctx.caps, honestEnv: member.honestEnv,
-      mirageLatencyMs: ctx.mirageLatencyMs, tokensUsed: () => droid?.tokensUsed,
+      mirageLatencyMs: ctx.mirageLatencyMs, tokensUsed: () => droid?.tokensUsed, label,
     });
 
     const crossings = [...new Set(r.history.filter((h) => h.decision !== "pass").map((h) => resourceOf(h.call)))];
