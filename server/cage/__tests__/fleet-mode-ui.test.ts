@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 // The console's pure fleet-mode helpers (Person A touched console/). The badge comes ONLY from session.attacker, so a
 // scripted run is never shown as agent behaviour; the cohort summary reports live and simulated separately.
-import { attackerBadge, cohortSummary, modeSplit, launchPath, modeById, FLEET_MODES } from "../../../console/fleet-mode.js";
+import { attackerBadge, cohortSummary, modeSplit, launchPath, modeById, FLEET_MODES, loopDepthFromActions, compareSummary } from "../../../console/fleet-mode.js";
 
 describe("attackerBadge: honesty on every tile", () => {
   it("labels droid as live and scripted as simulated", () => {
@@ -49,5 +49,27 @@ describe("modeSplit / launchPath / modes mirror the server", () => {
     expect(FLEET_MODES.map((m) => m.id)).toEqual(["live", "mixed", "scripted"]);
     expect(modeById("scripted")?.name).toBe("Fully scripted");
     expect(modeById("bogus")).toBeUndefined();
+  });
+});
+
+describe("FISCUS task 4 helpers: watcher-off path, loop depth, contrast", () => {
+  it("launchPath appends watcher=off only for the contrast run", () => {
+    expect(launchPath("scripted", 6, false)).toBe("/cage/fleet/start?mode=scripted&n=6");
+    expect(launchPath("scripted", 6, true)).toBe("/cage/fleet/start?mode=scripted&n=6&watcher=off");
+  });
+  it("loopDepthFromActions counts the most-repeated mirage command", () => {
+    const a = (cmd: string, decision: string) => ({ cmd, decision });
+    expect(loopDepthFromActions([a("GET x", "pass"), a("cat /opt", "mirage"), a("cat /opt", "mirage"), a("cat /opt", "mirage"), a("ls /etc", "mirage")])).toBe(3);
+    expect(loopDepthFromActions([a("cat ok", "pass")])).toBe(0);
+    expect(loopDepthFromActions([])).toBe(0);
+  });
+  it("compareSummary shows — until run.summary lands, and labels each side", () => {
+    const c = compareSummary({ realOutOfScope: 0 }, { realOutOfScope: 9 });
+    expect(c.on!.value).toBe("0");
+    expect(c.off!.value).toBe("9");
+    expect(c.off!.label).toContain("Without");
+    const pending = compareSummary({ realOutOfScope: null }, null);
+    expect(pending.on!.value).toBe("—");
+    expect(pending.off).toBeNull();
   });
 });

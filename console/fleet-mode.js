@@ -32,7 +32,34 @@ export function modeSplit(mode, n) {
   return { live: Math.ceil(n / 2), simulated: Math.floor(n / 2) };
 }
 
-export const launchPath = (mode, n) => `/cage/fleet/start?mode=${encodeURIComponent(mode)}&n=${encodeURIComponent(n)}`;
+export const launchPath = (mode, n, watcherOff = false) =>
+  `/cage/fleet/start?mode=${encodeURIComponent(mode)}&n=${encodeURIComponent(n)}${watcherOff ? '&watcher=off' : ''}`;
+
+/** Loop depth from a box's actions: the most times one identical mirage command was re-served (the agent
+ *  stuck in the shadow world). A client-side proxy until run.summary provides the server's loopDepth. */
+export function loopDepthFromActions(actions) {
+  const counts = new Map();
+  let max = 0;
+  for (const a of actions ?? []) {
+    if (a.decision !== 'mirage') continue;
+    const n = (counts.get(a.cmd) ?? 0) + 1;
+    counts.set(a.cmd, n);
+    if (n > max) max = n;
+  }
+  return max;
+}
+
+/** The watcher on/off contrast, each side from a run's { realOutOfScope } (null = run.summary not in yet). */
+export function compareSummary(on, off) {
+  const side = (run, label) => run == null ? null : {
+    label,
+    value: run.realOutOfScope == null ? '—' : String(run.realOutOfScope),
+    note: run.realOutOfScope == null ? 'run.summary not available yet'
+      : run.realOutOfScope === 0 ? 'nothing real was reached'
+      : `${run.realOutOfScope} out-of-scope call${run.realOutOfScope === 1 ? '' : 's'} reached the real system`,
+  };
+  return { on: side(on, 'With the watcher'), off: side(off, 'Without the watcher') };
+}
 
 /** The badge for one agent tile, from session.attacker ("droid" | "scripted" | "grok"). Unknown is never shown as live. */
 export function attackerBadge(attacker) {

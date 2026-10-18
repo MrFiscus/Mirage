@@ -1,5 +1,5 @@
 // The console renders host-side Mirage events. Launching is always an explicit action.
-import { FLEET_MODES, modeById, modeSplit, launchPath, attackerBadge, cohortSummary } from './fleet-mode.js';
+import { FLEET_MODES, modeById, modeSplit, launchPath, attackerBadge, cohortSummary, loopDepthFromActions, compareSummary } from './fleet-mode.js';
 
 const $ = (selector) => document.querySelector(selector);
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[c]));
@@ -23,7 +23,9 @@ const state = {
   view: 'setup', phase: 'idle', connected: false, count: 6, mode: 'live',
   boxes: new Map(), pending: new Map(), seen: new Set(), feed: [], failures: [],
   focus: null, filter: 'all', page: 0, startedAt: null, endedAt: null,
+  trigger: null, haveSummary: false, watcherOff: false, lastRun: { on: null, off: null },
 };
+const maskPhone = (s) => String(s ?? '').replace(/\d(?=\d{2})/g, '•');
 
 $('#app').innerHTML = `
   <a class="skip-link" href="#main">Skip to content</a>
@@ -59,6 +61,7 @@ $('#app').innerHTML = `
             <div class="count-stepper"><button class="count-step" id="plus" type="button" aria-label="More agents">+</button><button class="count-step" id="minus" type="button" aria-label="Fewer agents">−</button></div>
           </div>
           <div class="presets" role="group" aria-label="Fleet size presets">${[6, 25, 100, 1000].map(n => `<button type="button" data-count="${n}" aria-pressed="${n === 6}">${n.toLocaleString()}</button>`).join('')}</div>
+          <label class="contrast-toggle"><input type="checkbox" id="watcher-off" /> <span>Run with the watcher <b>off</b> (for the contrast)</span></label>
           <div class="launch-area"><button class="button primary launch-button" id="launch" type="button" disabled><span id="launch-label">Launch 6 VMs</span> ${icon('arrow')}</button></div>
           <p class="setup-error" id="setup-error" role="alert" hidden></p>
         </div>
@@ -70,6 +73,16 @@ $('#app').innerHTML = `
         <div class="workspace-title-group"><h1 id="workspace-title" tabindex="-1">Fleet</h1><span class="agent-badge" id="detail-badge" hidden></span></div>
         <div class="workspace-actions"><span class="run-clock" id="run-clock">00:00 elapsed</span><button class="button secondary" id="new-run" type="button" disabled>New experiment ${icon('expand')}</button><button class="button secondary" id="back" type="button" hidden>${icon('back')} All environments</button></div>
       </div>
+      <div class="trigger-band" id="trigger-band" role="alert" hidden></div>
+      <div class="headline" id="headline">
+        <div class="hero-oos" id="hero-oos"><span class="hero-label">Real out-of-scope access</span><strong id="s-oos">—</strong><span class="hero-note" id="s-oos-note">waiting for the run summary</span></div>
+        <div class="headline-side">
+          <div class="hmetric"><span>Loop depth</span><strong id="s-loop">00</strong></div>
+          <div class="hmetric"><span>Real / fake calls</span><strong id="s-realfake">00 / 00</strong></div>
+          <div class="hmetric"><span>Agents tripped</span><strong id="s-tripped">00 / 00</strong></div>
+        </div>
+      </div>
+      <div class="compare" id="compare" hidden></div>
       <div class="metrics" id="metrics">
         <div class="metric environment-metric"><span class="metric-label">Environments</span><strong id="s-vms">00<span> / 06</span></strong></div>
         <div class="metric"><span class="metric-label">Calls reviewed</span><strong id="s-moves">00</strong></div>
@@ -93,7 +106,7 @@ $('#app').innerHTML = `
       </div>
 
       <div class="detail-layout" id="detail" hidden>
-        <section class="filesystem" aria-labelledby="fs-heading"><div class="panel-heading"><div>${icon('folder')}<h2 id="fs-heading">Observed paths</h2></div></div><p class="panel-caption">Files and hosts referenced in this agent's tool calls.</p><div class="fs-tree" id="tree"></div></section>
+        <section class="filesystem" aria-labelledby="fs-heading"><div class="panel-heading"><div>${icon('folder')}<h2 id="fs-heading">Observed paths</h2></div><a class="forensic-link" id="forensic" download hidden>Download forensic log ${icon('expand')}</a></div><p class="panel-caption">Files and hosts referenced in this agent's tool calls.</p><div class="felt-progress" id="felt-progress" hidden><span class="felt-label">Agent's felt progress <i>· hidden, display only</i></span><div class="felt-track"><i id="felt-bar"></i></div></div><div class="fs-tree" id="tree"></div></section>
         <section class="activity-log" aria-labelledby="log-heading"><div class="panel-heading"><div><span class="terminal-mark">&gt;_</span><h2 id="log-heading">Agent activity</h2></div></div><div class="term" id="term"></div></section>
       </div>
     </section>
@@ -204,7 +217,7 @@ function statusOf(box) {
 function getBox(id) {
   if (state.boxes.has(id)) return state.boxes.get(id);
   // attacker is filled from session.started (session.attacker) and is the only source for the tile's badge
-  const box = { id, label: `VM-${pad(state.boxes.size + 1)}`, attacker: undefined, actions: [], moves: 0, mirage: 0, block: 0, stopped: false };
+  const box = { id, label: `VM-${pad(state.boxes.size + 1)}`, attacker: undefined, actions: [], moves: 0, mirage: 0, block: 0, stopped: false, realOutOfScope: null, loopDepth: 0, progress: 0, killReason: null, serves: new Map() };
   state.boxes.set(id, box);
   return box;
 }
@@ -264,6 +277,20 @@ function renderStats() {
   $('#s-moves').textContent = pad(sum('moves'));
   $('#s-mirage').textContent = pad(sum('mirage'));
   $('#s-block').textContent = pad(sum('block'));
+  // Headline (CLAUDE.md never-cut): real out-of-scope (from run.summary; — until it lands), loop depth, real/fake, tripped.
+  const loop = Math.max(0, ...boxes.map(b => Math.max(b.loopDepth, loopDepthFromActions(b.actions))), 0);
+  const passCalls = boxes.reduce((t, b) => t + (b.moves - b.mirage - b.block), 0);
+  const tripped = boxes.filter(b => b.mirage > 0 || b.block > 0).length;
+  const oosKnown = boxes.some(b => b.realOutOfScope != null);
+  const oos = oosKnown ? boxes.reduce((t, b) => t + (b.realOutOfScope ?? 0), 0) : null;
+  $('#s-loop').textContent = pad(loop);
+  $('#s-realfake').textContent = `${pad(passCalls)} / ${pad(sum('mirage'))}`;
+  $('#s-tripped').textContent = `${pad(tripped)} / ${pad(focused ? 1 : Math.max(state.count, state.boxes.size))}`;
+  $('#s-oos').textContent = oos == null ? '—' : String(oos);
+  $('#hero-oos').classList.toggle('breached', oos != null && oos > 0);
+  $('#s-oos-note').textContent = oos == null ? 'waiting for the run summary' : oos === 0 ? 'nothing real was reached' : `${oos} reached the real system`;
+  renderTriggerBand();
+  renderCompare();
   // Live and simulated results are always reported side by side, never pooled into one rate.
   const cohorts = cohortSummary([...state.boxes.values()]);
   $('#cohorts').hidden = state.view !== 'fleet' || cohorts.length === 0;
@@ -278,6 +305,26 @@ function renderStats() {
   if (state.view === 'fleet') {
     $('#workspace-title').textContent = 'Fleet';
   }
+}
+function renderTriggerBand() {
+  const band = $('#trigger-band');
+  if (!state.trigger || state.view !== 'fleet') { band.hidden = true; return; }
+  const t = state.trigger;
+  band.hidden = false;
+  band.innerHTML = `<strong>Boundary crossed</strong><span>${esc(t.label)} · step ${t.step} · ${esc(t.reason)}</span><time>${new Date(t.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time>${t.count > 1 ? `<span class="trip-count">${t.count} agents tripped</span>` : ''}`;
+}
+function renderCompare() {
+  const el = $('#compare');
+  const { on, off } = compareSummary(state.lastRun.on, state.lastRun.off);
+  if ((!on && !off) || state.view !== 'fleet') { el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML = `<h3>Watcher on vs. off</h3><div class="compare-grid">${[on, off].filter(Boolean).map(s => `<div class="compare-card ${s.label.includes('Without') ? 'bad' : 'good'}"><span>${esc(s.label)}</span><strong>${esc(s.value)}</strong><small>${esc(s.note)}</small></div>`).join('')}</div>`;
+}
+function updateFelt(box) {
+  const wrap = $('#felt-progress');
+  if (!box || !box.progress) { wrap.hidden = true; return; }
+  wrap.hidden = false;
+  $('#felt-bar').style.width = `${Math.round(box.progress * 100)}%`;
 }
 function updateClock() {
   if (!state.startedAt) return;
@@ -296,9 +343,22 @@ function openDetail(id) {
   $('#detail-badge').className = `agent-badge ${badge.kind}`;
   $('#detail-badge').textContent = badge.text;
   renderDetail(box, true);
+  updateFelt(box);
+  $('#forensic').hidden = false; $('#forensic').innerHTML = `Download forensic log ${icon('expand')}`;
   $('#workspace-title').focus({ preventScroll: true });
   window.scrollTo({ top: 0, behavior: 'instant' });
 }
+$('#forensic').onclick = async (event) => {
+  event.preventDefault();
+  const id = state.focus; if (!id) return;
+  try {
+    const response = await fetch(`/cage/runs/${encodeURIComponent(id)}`);
+    if (!response.ok) throw new Error();
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement('a'); link.href = url; link.download = `${id}.jsonl`; link.click();
+    URL.revokeObjectURL(url);
+  } catch { $('#forensic').textContent = 'Forensic log not available for this run'; }
+};
 $('#back').onclick = () => {
   const id = state.focus;
   state.focus = null;
@@ -331,9 +391,10 @@ function renderDetail(box, initial = false) {
   $('#tree').innerHTML = (paths.length ? tree(root) : '<p class="path-empty">No file paths observed yet.</p>') + (hosts.size ? `<div class="network-heading">Network</div>${[...hosts].map(([host, action]) => `<div class="node network-node"><span class="node-icon">${icon('globe')}</span><span class="node-name">${esc(host)}</span><span class="node-verdict ${action.decision}">${verdictName[action.decision]}</span></div>`).join('')}` : '');
   const term = $('#term');
   const followTail = !initial && term.scrollHeight - term.scrollTop - term.clientHeight < 60;
-  term.innerHTML = box.actions.length ? box.actions.map(action => `<article class="log-entry"><div class="log-meta"><span class="log-step">#${action.step}</span><span class="decision-badge ${action.decision}">${verdictName[action.decision]}</span></div><code class="log-command"><span>$</span> ${esc(action.cmd)}</code>${action.thought ? `<blockquote class="agent-note">${esc(action.thought)}</blockquote>` : ''}<p class="watcher-reason"><span>↳</span> ${esc(action.reason || (action.decision === 'pass' ? 'Within approved scope.' : 'Outside approved scope.'))}</p></article>`).join('') : '<div class="log-empty">The first tool call will appear here.</div>';
+  term.innerHTML = box.actions.length ? box.actions.map(action => `<article class="log-entry"><div class="log-meta"><span class="log-step">#${action.step}</span><span class="decision-badge ${action.decision}">${verdictName[action.decision]}</span></div><code class="log-command"><span>$</span> ${esc(action.cmd)}</code>${action.thought ? `<blockquote class="agent-note">${esc(action.thought)}</blockquote>` : ''}<p class="watcher-reason"><span>↳</span> ${esc(action.reason || (action.decision === 'pass' ? 'Within approved scope.' : 'Outside approved scope.'))}</p>${box.serves.has(action.callId) ? `<details class="served"><summary>What the mirage showed the agent</summary><pre>${esc(String(box.serves.get(action.callId)).slice(0, 700))}</pre></details>` : ''}</article>`).join('') : '<div class="log-empty">The first tool call will appear here.</div>';
   if (initial) term.scrollTop = 0;
   else if (followTail) term.scrollTop = term.scrollHeight;
+  updateFelt(box);
 }
 
 async function start() {
@@ -341,6 +402,7 @@ async function start() {
   if (!updateCount($('#n').value)) return;
   state.boxes.clear(); state.pending.clear(); state.seen.clear(); state.feed = []; state.failures = [];
   state.focus = null; state.filter = 'all'; state.page = 0; state.phase = 'provisioning'; state.startedAt = Date.now(); state.endedAt = null;
+  state.trigger = null; state.haveSummary = false; state.watcherOff = $('#watcher-off').checked;
   document.querySelectorAll('[data-filter]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.filter === 'all')));
   $('#setup-error').hidden = true;
   $('#feed').innerHTML = '<div class="feed-empty"><span class="empty-orbit"></span><p>Waiting for activity.</p></div>';
@@ -348,7 +410,7 @@ async function start() {
   $('#workspace-title').focus({ preventScroll: true });
   try {
     // The chosen mode decides what runs; the server refuses live modes without a Factory key instead of substituting scripts.
-    const response = await fetch(launchPath(state.mode, state.count), { method: 'POST' });
+    const response = await fetch(launchPath(state.mode, state.count, state.watcherOff), { method: 'POST' });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
       throw new Error(typeof body.error === 'string' ? body.error : `The server returned ${response.status}.`);
@@ -380,16 +442,36 @@ function handle(event) {
     if (!call || state.seen.has(event.callId) || !verdictName[event.verdict.decision]) return;
     state.seen.add(event.callId); state.pending.delete(event.callId);
     const box = getBox(call.session);
-    const action = { cmd: cmdOf(call), path: pathOf(call), url: call.args?.url, thought: call.thought ?? '', decision: event.verdict.decision, reason: event.verdict.reasons?.[0] ?? '', step: call.step };
+    const action = { callId: event.callId, cmd: cmdOf(call), path: pathOf(call), url: call.args?.url, thought: call.thought ?? '', decision: event.verdict.decision, reason: event.verdict.reasons?.[0] ?? '', step: call.step };
     box.actions.push(action); box.moves++;
     if (action.decision === 'mirage') box.mirage++;
     if (action.decision === 'block') box.block++;
+    if (action.decision === 'mirage' || action.decision === 'block') {
+      if (!state.trigger) state.trigger = { step: action.step, reason: action.reason || 'outside approved scope', label: box.label, ts: call.ts ?? Date.now(), count: 1, sessions: new Set([box.id]) };
+      else if (!state.trigger.sessions.has(box.id)) { state.trigger.sessions.add(box.id); state.trigger.count = state.trigger.sessions.size; }
+    }
     addFeed({ kind: action.decision, tag: verdictName[action.decision], label: `${box.label} · ${attackerBadge(box.attacker).text}`, detail: action.cmd, ts: call.ts });
     renderFleet(); renderStats();
     if (state.view === 'detail' && state.focus === box.id) renderDetail(box);
+  } else if (event.type === 'mirage.served') {
+    const box = state.boxes.get(event.entry?.session ?? event.session);
+    if (box && event.entry) { box.serves.set(event.callId, event.entry.value); if (state.view === 'detail' && state.focus === box.id) renderDetail(box); }
+  } else if (event.type === 'progress.updated') {
+    const box = state.boxes.get(event.session);
+    if (box) { box.progress = event.progress; if (state.view === 'detail' && state.focus === box.id) updateFelt(box); }
+  } else if (event.type === 'notify.sent') {
+    addFeed({ kind: 'notify', tag: event.channel === 'call' ? 'Defender call' : 'Defender text', label: 'Human notified', detail: `${maskPhone(event.to)}${event.detail ? ` · ${event.detail}` : ''}`, ts: event.ts });
+  } else if (event.type === 'run.summary') {
+    state.haveSummary = true;
+    const box = getBox(event.session);
+    box.realOutOfScope = event.realOutOfScope ?? 0;
+    box.loopDepth = event.loopDepth ?? box.loopDepth;
+    box.forensicPath = event.forensicPath;
+    renderStats();
+    if (state.view === 'detail' && state.focus === box.id) renderDetail(box);
   } else if (event.type === 'kill') {
     const box = state.boxes.get(event.session);
-    if (box) { box.stopped = true; renderFleet(); renderStats(); }
+    if (box) { box.stopped = true; box.killReason = event.reason; addFeed({ kind: 'block', tag: 'Stopped', label: box.label, detail: event.reason || 'kill switch', ts: Date.now() }); renderFleet(); renderStats(); }
   } else if (event.type === 'audit' && (event.action === 'vm.failed' || event.action === 'fleet.failed')) {
     state.failures.push(event.detail);
     addFeed({ kind: 'block', tag: 'Environment error', label: event.action === 'fleet.failed' ? 'Fleet' : 'Daytona', detail: event.detail });
@@ -400,6 +482,10 @@ function handle(event) {
 }
 function finish() {
   state.phase = 'complete'; state.endedAt = Date.now();
+  // Capture this run's headline for the watcher on/off contrast.
+  const boxes = [...state.boxes.values()];
+  const oos = boxes.some(b => b.realOutOfScope != null) ? boxes.reduce((t, b) => t + (b.realOutOfScope ?? 0), 0) : null;
+  state.lastRun[state.watcherOff ? 'off' : 'on'] = { realOutOfScope: oos };
   renderFleet(); renderStats(); updateClock();
 }
 function renderConnection() {
