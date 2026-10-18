@@ -35,18 +35,52 @@ function pathInScope(path: string, scope: Scope): boolean {
   });
 }
 
-// Paths a shell command touches — reads AND writes, so tampering with a config is seen, not just reads.
+// Split a command into its quoted string literals and the remaining unquoted text, so redirect/verb
+// parsing never fires on characters inside a quoted script (e.g. `>=0)` inside node -e "…").
+function splitQuotes(cmd: string): { unquoted: string; quoted: string[] } {
+  const quoted: string[] = [];
+  let unquoted = "", last = 0;
+  const re = /'[^']*'|"[^"]*"/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(cmd))) { unquoted += cmd.slice(last, m.index) + " "; quoted.push(m[0].slice(1, -1)); last = m.index + m[0].length; }
+  return { unquoted: unquoted + cmd.slice(last), quoted };
+}
+
+// A token is a usable path only if it is not a shell variable (`$f`, `"${x}"`), a flag, or an operator
+// fragment (`=0)`), and it actually looks like a path (has a slash, an extension, or is absolute).
+function cleanToken(t: string): string {
+  t = t.replace(/^["']+|["']+$/g, "").trim();
+  if (!t || t.startsWith("$") || /^[-=)(]/.test(t)) return "";
+  return t;
+}
+const pathLike = (t: string): boolean => /^(?:\/|\.\.?\/|~|[\w.-])/.test(t) && (t.includes("/") || /\.\w{1,6}$/.test(t));
+
+// Hostnames reached from a shell command (curl/wget/one-liners), quoted or not, so the host rules
+// apply the same way they do to http_get/http_post.
+function shellHosts(cmd: string): string[] {
+  return [...cmd.matchAll(/https?:\/\/([^\s'"/]+)/g)].map((m) => m[1]);
+}
+
+// Paths a shell command touches — reads AND writes — ignoring shell vars and quoted-literal noise.
 function referencedPaths(cmd: string): string[] {
+  const { unquoted, quoted } = splitQuotes(cmd);
   const out: string[] = [];
-  // absolute paths and traversal anywhere in the command
-  for (const m of cmd.matchAll(/(?:^|\s)((?:\/|\.\.\/)[^\s;|&>]+)/g)) out.push(m[1]);
-  // read/copy/edit/delete command targets
-  for (const m of cmd.matchAll(/\b(?:cat|less|more|head|tail|cp|mv|nano|vi|vim|touch|chmod|chown|rm|truncate)\s+([^\s;|&>]+)/g)) out.push(m[1]);
+  const add = (t: string) => { const c = cleanToken(t); if (c && pathLike(c)) out.push(c); };
+  // absolute paths and traversal in the unquoted text
+  for (const m of unquoted.matchAll(/(?:^|\s)((?:\/|\.\.\/)[^\s;|&>]+)/g)) add(m[1]);
+  // read/list/edit/delete verbs: capture all operands up to a separator, then split off each token
+  for (const m of unquoted.matchAll(/\b(?:cat|less|more|head|tail|cp|mv|nano|vi|vim|touch|chmod|chown|rm|truncate|ls|find|du|stat|tree)\s+([^;|&>\n]+)/g))
+    for (const tok of m[1].split(/\s+/)) if (!tok.startsWith("-")) add(tok);
   // write targets: redirects, tee, dd of=
-  for (const m of cmd.matchAll(/(?:>>?|\btee\s+|\bdd\s+of=)\s*([^\s;|&>]+)/g)) out.push(m[1]);
-  // in-place edit: the file is the last token of `sed -i ... <file>`
-  for (const m of cmd.matchAll(/\bsed\s+-i\S*\s+.*?\s([^\s;|&>]+)\s*$/g)) out.push(m[1]);
-  return out.filter(Boolean);
+  for (const m of unquoted.matchAll(/(?:>>?|\btee\s+|\bdd\s+of=)\s*([^\s;|&>]+)/g)) add(m[1]);
+  // in-place edit: the file is the last token of `sed -i … <file>`
+  for (const m of unquoted.matchAll(/\bsed\s+-i\S*\s+.*?\s([^\s;|&>]+)\s*$/g)) add(m[1]);
+  // inside quoted scripts: pull out absolute or multi-segment paths (strip URLs first so hosts aren't read as files)
+  for (const q of quoted) {
+    const noUrls = q.replace(/https?:\/\/\S+/g, " ");
+    for (const m of noUrls.matchAll(/(\/[\w./-]+|(?:\.\.?\/)?[\w.-]+\/[\w./-]+)/g)) add(m[1]);
+  }
+  return [...new Set(out)];
 }
 const isBackgroundSpawn = (cmd: string): boolean => /(?:&\s*$|\bnohup\b|\bdisown\b|\bsetsid\b|&\s*disown)/.test(cmd);
 
@@ -82,6 +116,10 @@ export function rules(call: ToolCall, scope: Scope): RuleResult {
     const cmd = str(call.args.cmd ?? call.args.command);
     if (isBackgroundSpawn(cmd)) raise("mirage", 0.7, "spawns a background process");
     for (const path of referencedPaths(cmd)) classifyPath(path, "shell touches");
+    for (const host of shellHosts(cmd)) {
+      if (isExfilHost(host)) raise("block", 1, `shell reaches a known exfiltration/metadata host: ${host}`);
+      else if (!scope.hosts.includes(host)) raise("mirage", 0.8, `shell reaches an out-of-scope host: ${host}`);
+    }
   }
 
   if (call.tool === "http_get" || call.tool === "http_post") {

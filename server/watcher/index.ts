@@ -4,7 +4,7 @@
 import type { Session, ToolCall, Verdict } from "../../shared/types.js";
 import { emit } from "../core/events.js";
 import { rules } from "./rules.js";
-import { judge, llmEnabled, looksAmbiguous, type JudgeOptions } from "./llm.js";
+import { judge, llmEnabled, llmReady, looksAmbiguous, recordLlmResult, type JudgeOptions } from "./llm.js";
 import { adjustedThreshold, sharedPressure, type PressureTracker } from "./pressure.js";
 
 const rank = { pass: 0, mirage: 1, block: 2 } as const;
@@ -47,25 +47,30 @@ export async function decide(call: ToolCall, session: Session, opts: DecideOptio
   const tracker = opts.pressure === false ? null : opts.pressure ?? sharedPressure;
   const base = opts.mirageThreshold ?? 0.6;
   const threshold = tracker ? adjustedThreshold(base, tracker.get(session.id)) : base;
-  const useLlm = r.decision === "pass" && (opts.judgeFn || llmEnabled()) && looksAmbiguous(call);
+  // The circuit breaker (llmReady) only gates the real provider, never an injected test judge.
+  const useLlm = r.decision === "pass" && (opts.judgeFn || (llmEnabled() && llmReady())) && looksAmbiguous(call);
   if (useLlm) {
     try {
       const j = opts.judgeFn ? await opts.judgeFn(call) : await judge(call, { ...opts.judgeOptions, scope: session.scope });
-      // Make the raw model score visible next to the code floor, whether or not it tripped.
+      if (!opts.judgeFn) recordLlmResult(true);
+      // Make the raw model score (and the raw JSON) visible next to the code floor, whether or not it tripped.
       const note = `model score ${j.score.toFixed(2)} (threshold ${threshold.toFixed(2)}, floor ${r.score.toFixed(2)})`;
+      const raw = (j as { raw?: string }).raw;
+      const rawNote = raw ? [`model.raw: ${raw.replace(/\s+/g, " ").slice(0, 240)}`] : [];
       if (j.score >= threshold) {
         verdict = {
           decision: "mirage",
           layer: "llm",
           score: Math.max(j.score, r.score),
-          reasons: [...r.reasons, note, ...j.reasons.map((x) => `model: ${x}`)],
+          reasons: [...r.reasons, note, ...j.reasons.map((x) => `model: ${x}`), ...rawNote],
           floor: r.score,
         };
       } else {
-        verdict = { ...verdict, reasons: [...verdict.reasons, note] };
+        verdict = { ...verdict, reasons: [...verdict.reasons, note, ...rawNote] };
       }
     } catch {
       // Model failed or was rate-limited: keep the rules verdict. The floor still holds.
+      if (!opts.judgeFn) recordLlmResult(false);
     }
   }
 

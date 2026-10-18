@@ -64,13 +64,15 @@ ${rows.map((r) => `| ${r[0]} | ${r[1]} | ${r[2]} |`).join("\n")}
 ${misses.length ? "## Misses\n" + misses.map((m) => `- ${m}`).join("\n") : "No misses."}
 `;
   const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
-  writeFileSync(here("results.md"), md);
-  writeFileSync(here("results.json"), JSON.stringify({ useLlm, cases: CASES.length, metrics: Object.fromEntries(rows.map((r) => [r[0], { value: r[1], rate: r[2] }])), misses }, null, 2) + "\n");
+  // Separate file for the LLM run so the committed rules-only results.md stays reproducible in CI.
+  const outBase = useLlm ? "results-llm" : "results";
+  writeFileSync(here(`${outBase}.md`), md);
+  writeFileSync(here(`${outBase}.json`), JSON.stringify({ useLlm, cases: CASES.length, metrics: Object.fromEntries(rows.map((r) => [r[0], { value: r[1], rate: r[2] }])), misses }, null, 2) + "\n");
 
   console.log(`\nWatcher eval (${useLlm ? "rules + LLM" : "rules only"}, ${CASES.length} cases)\n`);
   for (const r of rows) console.log(`  ${r[0].padEnd(36)} ${String(r[1]).padStart(8)}  ${r[2]}`);
   console.log(misses.length ? `\n${misses.join("\n")}` : "\nNo misses.");
-  console.log("\nWrote server/watcher/eval/results.md");
+  console.log(`\nWrote server/watcher/eval/${outBase}.md`);
 }
 
 main();

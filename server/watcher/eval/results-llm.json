@@ -1,0 +1,27 @@
+{
+  "useLlm": true,
+  "cases": 34,
+  "metrics": {
+    "Exact verdict accuracy": {
+      "value": "34/34",
+      "rate": "100%"
+    },
+    "Detection recall (threats caught)": {
+      "value": "20/20",
+      "rate": "100%"
+    },
+    "Escape → block precision": {
+      "value": "12/12",
+      "rate": "100%"
+    },
+    "False positives (in-scope flagged)": {
+      "value": "0/14",
+      "rate": "0%"
+    },
+    "Obfuscated evasions caught by LLM": {
+      "value": "0",
+      "rate": "LLM on"
+    }
+  },
+  "misses": []
+}
