@@ -157,7 +157,7 @@ function setTheme(theme) {
   document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#0a0a0b' : '#ffffff';
 }
 $('#theme-toggle').onclick = () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
-setTheme('light');
+setTheme('dark');
 
 function renderFleetPreview(count) {
   // An abstract view of the topology; large selections share a bounded set of representative nodes.
@@ -224,7 +224,6 @@ function switchView(view) {
   $('#metrics').hidden = view !== 'detail';
   $('#run-bar').hidden = view !== 'fleet';
   document.body.dataset.view = view;
-  setTheme('light');
   renderStats();
 }
 
