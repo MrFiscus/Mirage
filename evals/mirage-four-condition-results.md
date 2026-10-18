@@ -56,3 +56,7 @@ The 0 loop revisits are measured: this fixed script does not return to an alread
 | `data/fleet-runs/1792284534884-vm-droid-100.jsonl` | Raw log unavailable on Sandesh's machine; no new Droid row or mean duration is claimed here. The handoff reports 92 completed agents and two watcher false positives, but that source cannot be independently recalculated in this checkout. |
 
 After rebasing onto Fiscus's watcher update (`6088cec`), the same offline cage-harness runner retained every count in the table. Its new local durations were 16, 13, 22, and 22 ms; these are run-to-run timing noise rather than defender response measurements. The separate 13-step watcher seam improved to 12/13, with only step 12 still passing unexpectedly.
+
+## Tracked live verification call, 2026-10-17 later
+
+The earlier live notification smoke above remains a historical failed handshake. A later single scripted cage run completed the Photon/ElevenLabs path: the server sent a code to the registered analyst, `verify_code` matched the spoken readback, `/api/calls` marked the analyst `verified: true`, and `mirage_briefing.delivered` followed. The ElevenLabs transcript confirms the agent spoke the briefing. Details and the redacted sequence are in [live-handshake-2026-10-17.md](live-handshake-2026-10-17.md). This call did not test a spoken containment action; the published agent lacks the `contain` tool.

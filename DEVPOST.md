@@ -24,7 +24,7 @@ Node.js and TypeScript run the cage harness, watcher, fake world, and Express/We
 
 ## Accomplishments
 
-The cage-harness offline comparison recorded **5 real out-of-scope executions with the watcher off and 0 in each guarded condition** on a fixed synthetic script. In the full-stack offline condition, four calls were redirected, one was blocked, and three mock notification events were emitted. The notifier previously placed two observed live outbound calls, and one `send_code` tool invocation returned success. A live `verify_code` followed by a spoken briefing is **not yet confirmed**. The new containment voice tool is covered by local tests; it still needs to be attached to the published ElevenLabs agent.
+The cage-harness offline comparison recorded **5 real out-of-scope executions with the watcher off and 0 in each guarded condition** on a fixed synthetic script. In the full-stack offline condition, four calls were redirected, one was blocked, and three mock notification events were emitted. A separate tracked live call sent a Photon verification code, verified the analyst's spoken readback server-side, and delivered a spoken Mirage briefing through ElevenLabs. The containment voice route is covered by local tests; it still needs to be attached to the published ElevenLabs agent.
 
 ## What we learned
 
@@ -32,7 +32,7 @@ The strongest evidence comes from the independent execution record, not a watche
 
 ## What's next
 
-Complete and record one live code-readback and briefing call, attach the containment tool, review the missing Droid fleet log and watcher false positives, and add a dashboard control for watcher-off contrast plus a forensic download button. Test Daytona-native network isolation on the actual demo account and show the reported mode. xAI Grok is an optional future attacker axis; it is not built here.
+Attach and test the containment tool in a live call, review the missing Droid fleet log and the remaining watcher seam mismatch, and add a dashboard control for watcher-off contrast plus a forensic download button. Test Daytona-native network isolation on the actual demo account and show the reported mode. xAI Grok is an optional future attacker axis; it is not built here.
 
 ## Built with
 

@@ -34,8 +34,8 @@ The watcher sees only tool calls routed through the cage. `pass` reaches the all
 | Sponsor / track | Running contribution and measured status |
 |---|---|
 | Fintech & Cybersecurity | In-path scope checks, Mirage routing, containment request, forensic log, and analyst notification in a synthetic environment. |
-| Photon | Shared-line iMessage delivered a verification code in an earlier live test; the Photon SIP line carried two observed outbound ElevenLabs calls. A complete code-readback call remains unverified. |
-| ElevenLabs | Hosts the speaking agent for the outbound call. `send_code` was observed live; `verify_code` and spoken `mirage_briefing` have **not** yet been confirmed live. The new Mirage `contain` webhook route is tested locally but still needs to be attached to the published agent. |
+| Photon | Shared-line iMessage delivered a verification code to the registered analyst during a tracked live call; its SIP line carried the outbound call. |
+| ElevenLabs | Hosted a tracked outbound call in which `send_code`, `verify_code`, and `mirage_briefing` completed and the agent spoke the briefing after verification. The Mirage `contain` webhook route is tested locally but still needs to be attached to the published agent. |
 | Daytona | Creates disposable VMs for the live fleet. The cage records whether native network isolation succeeded or a simulated backstop was used; do not infer native blocking without checking that run's `networkIsolation`. |
 | Factory Droid | A live attacker can use only the cage MCP tools. The team handoff reports a 92-agent recorded run with two watcher false positives and no genuine scope crossing; its raw log is not present in this checkout, so this README does not treat it as a rechecked measurement. The scripted cohort is always labeled simulated. |
 | xAI Grok | Not built in this repository. |
@@ -67,7 +67,7 @@ Run `npx tsx evals/mirage-cage-conditions.ts --json` for the cage-harness compar
 | Tripwire + Mirage | 10 | 0 | 5 / 4 / 1 | 6 | 0 | 0 |
 | Full stack, offline | 10 | 0 | 5 / 4 / 1 | 6 | 0 | 3 |
 
-The fixed script cannot notice the Mirage, so these runs do not measure time bought from an adaptive agent. Times are local harness execution time, not defender response time. No live messages, calls, Daytona VMs, or billed model judgments were involved in this table. The historical Droid fleet log is unavailable on this machine; its row remains explicitly unverified here. A separate [single live handshake attempt](evals/live-handshake-2026-10-17.md) failed during notification delivery before a new call was created.
+The fixed script cannot notice the Mirage, so these runs do not measure time bought from an adaptive agent. Times are local harness execution time, not defender response time. No live messages, calls, Daytona VMs, or billed model judgments were involved in this table. The historical Droid fleet log is unavailable on this machine; its row remains explicitly unverified here. A separate [live handshake retest](evals/live-handshake-2026-10-17.md) succeeded after the backend, analyst number, and Quick Tunnel were updated.
 
 ## Claims we do not make
 
