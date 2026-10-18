@@ -212,6 +212,23 @@ export function voiceRouter(
     return response.json({ allowed: true, role: session.role, briefing });
   });
 
+  // Read-only answer to an analyst's explicit machine question. The conversation pins the
+  // alert and machine label; a session id or VM name supplied by the model is ignored.
+  router.post("/voice/tools/which-vm", express.json(), requireVoiceSecret, (request, response) => {
+    const session = resolveSession(request.body ?? {});
+    if ("error" in session) return response.status(session.status).json({ allowed: false, message: session.error });
+    if (!session.verified || session.role !== "analyst") {
+      emit({ type: "disclosure", conversationId: session.conversationId, role: session.role, fields: [], allowed: false });
+      return response.json({ allowed: false, message: "Verify the security analyst before sharing the machine name." });
+    }
+    const pinned = getMirageOutboundCall(session.conversationId);
+    if (!pinned) return response.json({ allowed: false, message: "No Mirage machine is associated with this call." });
+    const machine = pinned.trigger.machineLabel;
+    if (!machine) return response.json({ allowed: false, message: "This alert has no named VM. Review its session in the Mirage dashboard." });
+    emit({ type: "disclosure", conversationId: session.conversationId, role: session.role, fields: ["machine_label"], allowed: true });
+    return response.json({ allowed: true, machine, message: `The machine associated with this alert is ${machine}.` });
+  });
+
   // Only a verified analyst on a server-pinned Mirage outbound call can authorize containment.
   // The model supplies the decision, never the session id or the caller's role.
   router.post("/voice/tools/contain", express.json(), requireVoiceSecret, async (request, response) => {

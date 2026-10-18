@@ -17,6 +17,25 @@ function setup(recipient: Caller | null = analyst) {
 }
 
 describe("defender notification", () => {
+  it("pins each fleet machine label to its own high-priority trigger", async () => {
+    const triggers: Array<{ sessionId: string; machineLabel?: string }> = [];
+    const notifier = new DefenderNotifier({
+      mode: "mock",
+      async sendText() {},
+      async placeCall(_to, _greeting, trigger) { triggers.push(trigger); }
+    }, () => analyst, () => undefined);
+    await notifier.handleEvent({ type: "session.started", session: { id: "one", attacker: "scripted", label: "ava.PC@coffee.org" } });
+    await notifier.handleEvent({ type: "session.started", session: { id: "two", attacker: "scripted", label: "liam.PC@coffee.org" } });
+    await notifier.handleEvent({ type: "tool.call", call: { id: "call-two", session: "two", step: 2 } });
+    await notifier.handleEvent({ type: "tool.call", call: { id: "call-one", session: "one", step: 3 } });
+    await notifier.handleEvent({ type: "watcher.verdict", callId: "call-two", verdict: { decision: "block" } });
+    await notifier.handleEvent({ type: "watcher.verdict", callId: "call-one", verdict: { decision: "block" } });
+    expect(triggers).toEqual([
+      expect.objectContaining({ sessionId: "two", machineLabel: "liam.PC@coffee.org" }),
+      expect.objectContaining({ sessionId: "one", machineLabel: "ava.PC@coffee.org" })
+    ]);
+  });
+
   it("uses Photon for live text and pins the ElevenLabs call to its Mirage trigger", async () => {
     const originalFetch = globalThis.fetch;
     const keys = ["ELEVENLABS_API_KEY", "ELEVENLABS_AGENT_ID", "ELEVENLABS_PHONE_NUMBER_ID"] as const;
