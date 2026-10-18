@@ -156,7 +156,7 @@ describe("defender notification", () => {
     expect(sendText).toHaveBeenCalledTimes(1);
     expect(placeCall).toHaveBeenCalledTimes(2);
     expect(events.find((event) => event.type === "audit" && event.action === "notification.failed")).toEqual(
-      expect.objectContaining({ detail: "Defender notification delivery failed" })
+      expect.objectContaining({ detail: "call delivery failed: transport error (details withheld)" })
     );
   });
 

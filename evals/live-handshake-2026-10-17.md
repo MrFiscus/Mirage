@@ -1,0 +1,7 @@
+# Live Mirage handshake check — 2026-10-17
+
+One scripted cage run was started against the already-running local backend after the analyst approved a single live test. The backend health and voice readiness endpoints reported healthy/ready before the run. The configured analyst was registered, and a read-only Photon assignment check showed an active shared-line assignment.
+
+The run completed with session `5536ab36`. Its audit included `notification.priority_checked` entries at medium and high priority, followed by `notification.failed` with the older backend's generic “Defender notification delivery failed” detail. `/api/calls` remained at 9 records and no `call.mirage_outbound` event appeared. There is no evidence that this run sent a Photon message, placed an ElevenLabs call, or reached `send_code`, `verify_code`, or `mirage_briefing`. Consequently there is no transcript to redact or attach.
+
+The running process appears to be older than the checkout: it returned 404 for `GET /cage/runs`, a route present in the current source. The local notifier has since gained safe failure-stage audit details (`text` or `call`, selected HTTP status / shared-line prerequisite), but that code has not been exercised by the long-running process. Restart the backend from the current checkout, confirm the ElevenLabs tools and current tunnel URL, then obtain approval for a separate single live retest. Inspect `notification.failed`, `notify.sent`, `/api/calls`, and `call.verified` / `mirage_briefing.delivered` audits before declaring the handshake verified.

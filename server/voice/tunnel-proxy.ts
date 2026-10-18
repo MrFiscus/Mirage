@@ -10,6 +10,7 @@ const voicePaths = new Set([
   "/voice/tools/send-code",
   "/voice/tools/verify-code",
   "/voice/tools/mirage-briefing",
+  "/voice/tools/contain",
   "/voice/post-call"
 ]);
 

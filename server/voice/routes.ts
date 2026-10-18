@@ -7,6 +7,7 @@ import { approve, reject } from "../defense/approval.js";
 import { briefingFor } from "../defense/briefing.js";
 import { incidentViewFor } from "./disclosure.js";
 import { attachNotificationBridge, getMirageOutboundCall, getOutboundCall, type DefenderNotifier } from "./outbound.js";
+import { getProvenance, verify as verifyProvenance } from "./provenance.js";
 import { MAX_CODE_ATTEMPTS, type VerificationService } from "./verification.js";
 
 const MAX_CODE_SENDS = 3;
@@ -73,6 +74,12 @@ export function voiceRouter(
   notifications: Pick<DefenderNotifier, "getBriefing"> = attachNotificationBridge()
 ): express.Router {
   const router = express.Router();
+
+  router.get("/voice/provenance/:session", requireVoiceSecret, (request, response) => {
+    const signed = getProvenance(String(request.params.session));
+    if (!signed) return response.status(404).json({ error: "No signed record for this session" });
+    return response.json({ ...signed, verified: verifyProvenance(signed) });
+  });
 
   router.post("/voice/init", express.json(), requireVoiceSecret, (request, response) => {
     const phone = normalizePhone(request.body?.caller_id);
@@ -201,7 +208,46 @@ export function voiceRouter(
       return response.json({ allowed: false, message: "No alert is available to this caller." });
     }
     emit({ type: "disclosure", conversationId: session.conversationId, role: session.role, fields: ["mirage_briefing"], allowed: true });
+    emit({ type: "audit", actor: "voice", action: "mirage_briefing.delivered", detail: `${session.conversationId}: verified briefing for ${getMirageOutboundCall(session.conversationId)?.trigger.sessionId ?? "unknown session"}`, ts: Date.now() });
     return response.json({ allowed: true, role: session.role, briefing });
+  });
+
+  // Only a verified analyst on a server-pinned Mirage outbound call can authorize containment.
+  // The model supplies the decision, never the session id or the caller's role.
+  router.post("/voice/tools/contain", express.json(), requireVoiceSecret, async (request, response) => {
+    const session = resolveSession(request.body ?? {});
+    if ("error" in session) return response.status(session.status).json({ done: false, message: session.error });
+    const pinned = getMirageOutboundCall(session.conversationId);
+    const refuse = (message: string) => {
+      emit({ type: "audit", actor: "voice", action: "containment.refused", detail: `${session.conversationId}: ${message}`, ts: Date.now() });
+      return response.json({ done: false, message });
+    };
+    if (!pinned) return refuse("Containment decisions are only available on an outbound Mirage alert call.");
+    if (!session.verified) return refuse("Verify the analyst before taking a containment decision.");
+    if (session.role !== "analyst") return refuse("Only a security analyst can decide containment.");
+    const decision = request.body?.decision;
+    if (decision !== "contain" && decision !== "hold") return refuse("Ask the analyst whether to contain the session or hold for review.");
+    const sessionId = pinned.trigger.sessionId;
+    if (decision === "hold") {
+      emit({ type: "audit", actor: "voice", action: "containment.declined", detail: `${sessionId}: verified analyst chose hold`, ts: Date.now() });
+      return response.json({ done: true, decision: "hold", message: "Okay. I recorded your decision to hold. Review the session in the Mirage dashboard." });
+    }
+
+    // The cage route is on the same local server. A 404 means the session already ended
+    // or the cage endpoint is not yet available; record authorization without claiming a cut.
+    let requested = false;
+    try {
+      const url = `http://127.0.0.1:${Number(process.env.PORT ?? 8787)}/cage/sessions/${encodeURIComponent(sessionId)}/contain`;
+      const result = await fetch(url, { method: "POST", signal: AbortSignal.timeout(5000) });
+      requested = result.ok && (await result.json() as { contained?: boolean }).contained === true;
+    } catch { /* The authorization remains auditable even if the cage route is unavailable. */ }
+    emit({ type: "audit", actor: "voice", action: "containment.authorized", detail: `${sessionId}: verified analyst authorized; stop ${requested ? "requested" : "unavailable"}`, ts: Date.now() });
+    return response.json({
+      done: true, decision: "contain", stopRequested: requested,
+      message: requested
+        ? "Containment was requested for this session. Check the run summary for the actual outcome."
+        : "Your authorization was recorded, but the containment endpoint is unavailable or the session has ended. Review the session in the Mirage dashboard."
+    });
   });
 
   // Analyst approves or rejects the pending fix out loud. Only on a call Batman placed about that incident,
