@@ -462,11 +462,12 @@ function handle(event) {
   } else if (event.type === 'notify.sent') {
     addFeed({ kind: 'notify', tag: event.channel === 'call' ? 'Defender call' : 'Defender text', label: 'Human notified', detail: `${maskPhone(event.to)}${event.detail ? ` · ${event.detail}` : ''}`, ts: event.ts });
   } else if (event.type === 'run.summary') {
+    const s = event.summary ?? event; // server nests the fields under .summary
     state.haveSummary = true;
-    const box = getBox(event.session);
-    box.realOutOfScope = event.realOutOfScope ?? 0;
-    box.loopDepth = event.loopDepth ?? box.loopDepth;
-    box.forensicPath = event.forensicPath;
+    const box = getBox(s.session);
+    box.realOutOfScope = s.realOutOfScope ?? 0;
+    box.loopDepth = s.loopDepth ?? box.loopDepth;
+    box.forensicPath = s.forensicPath;
     renderStats();
     if (state.view === 'detail' && state.focus === box.id) renderDetail(box);
   } else if (event.type === 'kill') {
