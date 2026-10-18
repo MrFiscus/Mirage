@@ -41,12 +41,12 @@ $('#app').innerHTML = `
     <section class="setup page" id="setup" aria-labelledby="setup-title">
       <div class="setup-heading">
         <h1 id="setup-title" tabindex="-1">A small world.<br><span>Under your control.</span></h1>
-        <p class="setup-description">Run agents in isolated Daytona VMs, each on a job it cannot finish in scope. The watcher checks every tool call, then lets it through, redirects it into the mirage, or blocks it.</p>
+        <p class="setup-description">Run agents in isolated environments (a Daytona VM for shell and files; the Acme services are simulated in-process), each on a job it cannot finish in scope. The watcher checks every tool call, then lets it through, redirects it into the mirage, or blocks it.</p>
       </div>
       <div class="fleet-configurator">
         <div class="fleet-preview">
           <div id="fleet-diagram" class="fleet-diagram" aria-hidden="true"></div>
-          <div class="preview-caption"><span id="preview-count">6 isolated VMs</span><span class="preview-split" id="preview-split"></span><span class="preview-watcher">One watcher.</span></div>
+          <div class="preview-caption"><span id="preview-count">6 isolated environments</span><span class="preview-split" id="preview-split"></span><span class="preview-watcher">One watcher.</span></div>
         </div>
         <div class="setup-controls">
           <fieldset class="mode-picker">
@@ -135,7 +135,7 @@ function renderFleetPreview(count) {
     return { x: 280 + Math.cos(angle) * 174, y: 166 + Math.sin(angle) * 118, simulated };
   });
   $('#fleet-diagram').innerHTML = `<svg viewBox="0 0 560 332" fill="none" aria-hidden="true"><ellipse cx="280" cy="166" rx="174" ry="118" class="preview-orbit"/>${nodes.map(node => `<path d="M280 166 ${node.x} ${node.y}" class="preview-wire"/>`).join('')}<circle cx="280" cy="166" r="57" class="watcher-halo"/><circle cx="280" cy="166" r="43" class="watcher-core"/><circle cx="280" cy="158" r="10" class="watcher-mark"/><text x="280" y="186" text-anchor="middle" class="watcher-label">Watcher</text>${nodes.map(node => `<g transform="translate(${node.x - 23} ${node.y - 19})"><rect width="46" height="38" rx="9" class="preview-agent${node.simulated ? ' simulated' : ''}"/><rect x="13" y="10" width="20" height="13" rx="2" class="preview-screen"/><path d="M19 28h8m-4-5v5" class="preview-screen"/></g>`).join('')}</svg>`;
-  $('#preview-count').textContent = `${count.toLocaleString()} isolated VM${count === 1 ? '' : 's'}`;
+  $('#preview-count').textContent = `${count.toLocaleString()} isolated environment${count === 1 ? '' : 's'}`;
   $('#preview-split').innerHTML = [
     split.live ? `<span><i class="swatch live"></i>${split.live.toLocaleString()} live Droid</span>` : '',
     split.simulated ? `<span><i class="swatch simulated"></i>${split.simulated.toLocaleString()} scripted</span>` : '',

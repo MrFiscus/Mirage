@@ -12,7 +12,7 @@ document.querySelector("#landing").innerHTML = `
   <main class="hero" id="main">
     <div class="hero-copy">
       <h1>Let them wander.<br /><span>Keep the boundary.</span></h1>
-      <p class="hero-description">When an agent steps outside its scope, Mirage redirects it into a world of decoys. Watch every move. Stay in control.</p>
+      <p class="hero-description">When an agent steps outside its scope, Mirage redirects it into a world of decoys. Watch every tool call. Stay in control.</p>
       <div class="hero-actions">
         <a class="primary-link" href="/fleet.html">Enter the sandbox ${arrow}</a>
         <a class="primary-link outline-link" href="/how-it-works.html">How it works ${arrow}</a>

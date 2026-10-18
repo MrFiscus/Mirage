@@ -7,13 +7,13 @@ export const FLEET_MODES = [
     id: 'live',
     name: 'No script',
     split: 'All live Droid',
-    detail: 'Every VM runs a live Factory Droid agent on the impossible flag hunt. Nothing is scripted: whether an agent crosses scope is its own choice, and it may never do so.',
+    detail: 'Every VM runs a live Factory Droid agent on the impossible flag hunt (live only when a Factory key is configured). Nothing is scripted: whether an agent crosses scope is its own choice — in our recorded 100-agent run, no live Droid agent crossed scope.',
   },
   {
     id: 'mixed',
     name: 'Half & half',
     split: 'Half live · half scripted',
-    detail: 'Half the VMs run live Droid agents on jobs they cannot finish in scope. The other half replay a scripted rogue run that crosses on purpose. Each tile is labelled and the results are counted separately.',
+    detail: 'Half the VMs run live Droid agents on jobs they cannot finish in scope (live only when a Factory key is configured; in our recorded run no live Droid crossed scope). The other half replay a scripted rogue run that crosses on purpose. Each tile is labelled and the results are counted separately.',
   },
   {
     id: 'scripted',
