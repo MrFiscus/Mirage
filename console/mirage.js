@@ -23,7 +23,7 @@ const verdictName = { pass: 'Passed', mirage: 'Redirected', block: 'Blocked' };
 const pad = (number) => String(number).padStart(2, '0');
 const PAGE_SIZE = 24;
 const state = {
-  view: 'setup', phase: 'idle', connected: false, count: 6, mode: 'live',
+  view: 'setup', phase: 'idle', connected: false, count: 15, mode: 'demo',
   boxes: new Map(), pending: new Map(), seen: new Set(), feed: [], failures: [],
   focus: null, filter: 'all', page: 0, startedAt: null, endedAt: null,
   trigger: null, haveSummary: false, watcherOff: false, lastRun: { on: null, off: null },
@@ -50,18 +50,18 @@ $('#app').innerHTML = `
       <div class="fleet-configurator">
         <div class="fleet-preview">
           <div id="fleet-diagram" class="fleet-diagram" aria-hidden="true"></div>
-          <div class="preview-caption"><span id="preview-count">6 isolated environments</span><span class="preview-watcher">One watcher.</span></div>
+          <div class="preview-caption"><span id="preview-count">15 isolated environments</span><span class="preview-watcher">One watcher.</span></div>
         </div>
         <div class="setup-controls">
           <label class="count-label" for="n">How many agents?</label>
           <p class="control-description" id="count-hint">One agent per virtual machine.</p>
           <div class="count-control">
-            <input id="n" type="number" min="1" step="1" value="6" aria-describedby="count-hint" />
+            <input id="n" type="number" min="1" step="1" value="15" aria-describedby="count-hint" />
             <div class="count-stepper"><button class="count-step" id="plus" type="button" aria-label="More agents">+</button><button class="count-step" id="minus" type="button" aria-label="Fewer agents">−</button></div>
           </div>
-          <div class="presets" role="group" aria-label="Fleet size presets">${[6, 25, 100, 1000].map(n => `<button type="button" data-count="${n}" aria-pressed="${n === 6}">${n.toLocaleString()}</button>`).join('')}</div>
+          <div class="presets" role="group" aria-label="Fleet size presets">${[6, 15, 25, 100].map(n => `<button type="button" data-count="${n}" aria-pressed="${n === 15}">${n.toLocaleString()}</button>`).join('')}</div>
           <div class="lock-field"><div class="contrast-text"><strong>Watcher</strong></div><label class="lock-slider" id="lock-slider"><input type="checkbox" id="watcher-off" role="switch" aria-label="Run unprotected, with the watcher off" /><span class="lock-track" aria-hidden="true"><span class="lock-label">${icon('lock')} Protected</span><span class="lock-label">${icon('unlock')} Unprotected</span><span class="lock-thumb" id="lock-thumb"><span class="thumb-face on">${icon('lock')} Protected</span><span class="thumb-face off">${icon('unlock')} Unprotected</span></span></span></label></div>
-          <div class="launch-area"><button class="button primary launch-button" id="launch" type="button" disabled><span id="launch-label">Launch 6 VMs</span> ${icon('arrow')}</button></div>
+          <div class="launch-area"><button class="button primary launch-button" id="launch" type="button" disabled><span id="launch-label">Launch 15 VMs</span> ${icon('arrow')}</button></div>
           <p class="setup-error" id="setup-error" role="alert" hidden></p>
         </div>
       </div>
@@ -172,7 +172,7 @@ $('#plus').onclick = () => updateCount(state.count + 1);
 $('#n').onchange = event => updateCount(event.target.value);
 $('#n').onkeydown = event => { if (event.key === 'Enter' && updateCount(event.target.value) && !$('#launch').disabled) start(); };
 document.querySelectorAll('[data-count]').forEach(button => { button.onclick = () => updateCount(button.dataset.count); });
-updateCount(6);
+updateCount(state.count);
 
 function switchView(view) {
   state.view = view;
@@ -401,19 +401,40 @@ function renderDetail(box, initial = false) {
   });
   $('#tree').innerHTML = (paths.length ? tree(root) : '<p class="path-empty">No file paths observed yet.</p>') + (hosts.size ? `<div class="network-heading">Network</div>${[...hosts].map(([host, action]) => `<div class="node network-node"><span class="node-icon">${icon('globe')}</span><span class="node-name">${esc(host)}</span><span class="node-verdict ${action.decision}">${verdictName[action.decision]}</span></div>`).join('')}` : '');
   const term = $('#term');
-  const followTail = !initial && term.scrollHeight - term.scrollTop - term.clientHeight < 60;
+  // Like a terminal: open on the newest call and keep following it, unless the viewer has scrolled up to read.
+  const followTail = initial || term.scrollHeight - term.scrollTop - term.clientHeight < 60;
   term.innerHTML = box.actions.length ? box.actions.map(action => `<article class="log-entry" data-decision="${action.decision}"><div class="log-meta"><span class="log-step">#${action.step}</span><span class="decision-badge ${action.decision}">${verdictName[action.decision]}</span></div><code class="log-command"><span>$</span> ${esc(action.cmd)}</code>${action.thought ? `<blockquote class="agent-note">${esc(action.thought)}</blockquote>` : ''}<p class="watcher-reason"><span>↳</span> ${esc(action.reason || (action.decision === 'pass' ? 'Within approved scope.' : 'Outside approved scope.'))}</p>${box.serves.has(action.callId) ? `<details class="served"><summary>What the mirage showed the agent</summary><pre>${esc(String(box.serves.get(action.callId)).slice(0, 700))}</pre></details>` : ''}</article>`).join('') : '<div class="log-empty">The first tool call will appear here.</div>';
-  if (initial) term.scrollTop = 0;
-  else if (followTail) term.scrollTop = term.scrollHeight;
+  if (followTail) term.scrollTop = term.scrollHeight;
   updateFelt(box);
 }
 
+// Demo: the guaranteed-crossing VM starts once the live agents have made this many calls (or after the fallback delay).
+const DEMO_CROSSING_AFTER_CALLS = 12;
+const DEMO_CROSSING_FALLBACK_MS = 30_000;
+async function post(path) {
+  const response = await fetch(path, { method: 'POST' });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(typeof body.error === 'string' ? body.error : `The server returned ${response.status}.`);
+  }
+}
+function launchDeferred() {
+  const path = state.deferred;
+  if (!path) return;
+  state.deferred = null; clearTimeout(state.deferTimer);
+  post(path).catch((error) => {
+    state.fleetsLeft = Math.max(0, state.fleetsLeft - 1);
+    addFeed({ kind: 'block', tag: 'Environment error', label: 'Fleet', detail: error.message });
+    if (state.fleetsLeft === 0) finish();
+  });
+}
 async function start() {
   if (!state.connected || (state.phase !== 'idle' && state.phase !== 'complete' && state.phase !== 'error')) return;
   if (!updateCount($('#n').value)) return;
   state.boxes.clear(); state.pending.clear(); state.seen.clear(); state.feed = []; state.failures = [];
   state.focus = null; state.filter = 'all'; state.page = 0; state.phase = 'provisioning'; state.startedAt = Date.now(); state.endedAt = null;
   state.trigger = null; state.haveSummary = false; state.watcherOff = $('#watcher-off').checked;
+  state.deferred = null; clearTimeout(state.deferTimer);
   document.querySelectorAll('[data-filter]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.filter === 'all')));
   $('#setup-error').hidden = true;
   $('#feed').innerHTML = '<div class="feed-empty"><span class="empty-orbit"></span><p>Waiting for activity.</p></div>';
@@ -422,15 +443,12 @@ async function start() {
   try {
     // The chosen mode decides what runs; the server refuses live modes without a Factory key instead of substituting scripts.
     // Demo is two fleets (the guaranteed crossing first, then the live agents); the run ends when every fleet completes.
-    const paths = launchPaths(state.mode, state.count, state.watcherOff);
-    state.fleetsLeft = paths.length;
-    for (const path of paths) {
-      const response = await fetch(path, { method: 'POST' });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(typeof body.error === 'string' ? body.error : `The server returned ${response.status}.`);
-      }
-    }
+    // The crossing VM is held back until the live agents are visibly working, so the alarm lands mid-run.
+    const [first, deferred] = launchPaths(state.mode, state.count, state.watcherOff);
+    state.fleetsLeft = deferred ? 2 : 1;
+    state.liveCalls = 0;
+    await post(first);
+    if (deferred) { state.deferred = deferred; state.deferTimer = setTimeout(launchDeferred, DEMO_CROSSING_FALLBACK_MS); }
   } catch (error) {
     state.phase = 'error'; state.endedAt = Date.now();
     switchView('setup');
@@ -509,10 +527,13 @@ function handle(event) {
   if (event.type === 'session.started') {
     const started = getBox(event.session.id);
     started.attacker = event.session.attacker;
-    if (event.session.label) started.label = event.session.label; // the server's name wins over the positional one
+    // The server's name wins over the positional one, unless another machine already has it (a demo is two fleets,
+    // and each fleet numbers its machines from the start).
+    if (event.session.label && ![...state.boxes.values()].some(b => b !== started && b.label === event.session.label)) started.label = event.session.label;
     state.phase = state.phase === 'complete' ? 'complete' : 'running'; renderFleet(); renderStats();
   } else if (event.type === 'tool.call') {
     state.pending.set(event.call.id, event.call);
+    if (state.deferred && ++state.liveCalls >= DEMO_CROSSING_AFTER_CALLS) launchDeferred();
   } else if (event.type === 'watcher.verdict') {
     const call = state.pending.get(event.callId);
     if (!call || state.seen.has(event.callId) || !verdictName[event.verdict.decision]) return;

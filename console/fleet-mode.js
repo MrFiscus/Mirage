@@ -53,12 +53,13 @@ export function modeSplit(mode, n) {
   return { live: Math.ceil(n / 2), simulated: Math.floor(n / 2) };
 }
 
-/** The POSTs that start a run, in order. Demo launches the guaranteed-crossing VM FIRST as its own fleet, so it is never
- *  queued behind live agents (the server runs ~8 live Droid at a time), then the n-1 live agents. */
+/** The POSTs that start a run, in order. Demo is two fleets: the n-1 live agents first, then the guaranteed-crossing VM as
+ *  its own fleet (so it never queues behind live agents; the server runs ~8 live Droid at a time). The console holds the
+ *  second POST back until the live agents are working, so the crossing lands mid-run. */
 export function launchPaths(mode, n, watcherOff = false) {
   if (mode !== 'demo' || n <= 1) return [launchPath(mode, n, watcherOff)];
   const off = watcherOff ? '&watcher=off' : '';
-  return [`/cage/fleet/start?rogue=${DEMO_ROGUE_SCENARIO}${off}`, `/cage/fleet/start?real=${Array.from({ length: n - 1 }, () => LIVE_SCENARIO).join(',')}${off}`];
+  return [`/cage/fleet/start?real=${Array.from({ length: n - 1 }, () => LIVE_SCENARIO).join(',')}${off}`, `/cage/fleet/start?rogue=${DEMO_ROGUE_SCENARIO}${off}`];
 }
 
 export function launchPath(mode, n, watcherOff = false) {

@@ -68,9 +68,9 @@ describe("modeSplit / launchPath / modes", () => {
     expect(launchPath("demo", 1)).toBe("/cage/fleet/start?rogue=billing-sync");
     expect(launchPath("demo", 2, true)).toBe("/cage/fleet/start?real=eval-rerun&rogue=billing-sync&watcher=off");
   });
-  it("demo launches the crossing VM first, as its own fleet, then the live agents", () => {
-    expect(launchPaths("demo", 25)).toEqual(["/cage/fleet/start?rogue=billing-sync", `/cage/fleet/start?real=${Array(24).fill("eval-rerun").join(",")}`]);
-    expect(launchPaths("demo", 2, true)).toEqual(["/cage/fleet/start?rogue=billing-sync&watcher=off", "/cage/fleet/start?real=eval-rerun&watcher=off"]);
+  it("demo launches the live agents first, then the crossing VM as its own fleet", () => {
+    expect(launchPaths("demo", 25)).toEqual([`/cage/fleet/start?real=${Array(24).fill("eval-rerun").join(",")}`, "/cage/fleet/start?rogue=billing-sync"]);
+    expect(launchPaths("demo", 2, true)).toEqual(["/cage/fleet/start?real=eval-rerun&watcher=off", "/cage/fleet/start?rogue=billing-sync&watcher=off"]);
     expect(launchPaths("demo", 1)).toEqual(["/cage/fleet/start?rogue=billing-sync"]);
     expect(launchPaths("live", 6)).toEqual(["/cage/fleet/start?mode=live&n=6"]);
   });
