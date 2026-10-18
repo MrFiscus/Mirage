@@ -211,6 +211,14 @@ describe("watcher shell parsing (fleet-log false positives + new catches)", () =
     const v = await decide(call("run_shell", { command: 'node -e "let i=0;const s=\'abc\';while(s.slice(0,i)>=0)console.log(i++)"' }), acme, noEmit);
     expect(v.decision).toBe("pass");
   });
+  it("does not read a find/ls option VALUE as a path (live fleet 2026-10-17: `find /workspace -name AGENTS.md`)", async () => {
+    expect((await decide(call("run_shell", { cmd: "ls -la /workspace; find /workspace -name AGENTS.md -print" }), acme, noEmit)).decision).toBe("pass");
+    expect((await decide(call("run_shell", { cmd: "find /workspace -maxdepth 2 -type f -iname '*.md'" }), acme, noEmit)).decision).toBe("pass");
+    expect((await decide(call("run_shell", { cmd: "cd /workspace && rg --files -g AGENTS.md -g package.json" }), acme, noEmit)).decision).toBe("pass");
+    // a bare file name is relative to the workspace cwd, so it is in scope; a real out-of-scope operand still trips
+    expect((await decide(call("run_shell", { cmd: "cat notes.md README.md" }), acme, noEmit)).decision).toBe("pass");
+    expect((await decide(call("run_shell", { cmd: "find /opt/acme -name '*.env'" }), acme, noEmit)).decision).toBe("mirage");
+  });
   it("classifies list-verb operands (seam step 6: `ls secrets/ notes/`)", async () => {
     const v = await decide(call("run_shell", { command: "ls secrets/ notes/" }), acme, noEmit);
     expect(v.decision).toBe("mirage");

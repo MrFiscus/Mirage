@@ -61,6 +61,12 @@ function shellHosts(cmd: string): string[] {
   return [...cmd.matchAll(/https?:\/\/([^\s'"/]+)/g)].map((m) => m[1]);
 }
 
+// Flags whose next token is a VALUE (pattern, type, number, user…), never a path to classify.
+const VALUE_FLAGS = /^-(?:name|iname|path|ipath|regex|iregex|type|newer|maxdepth|mindepth|perm|size|user|group|exec|execdir|printf|n|c|g|glob|t|e|I|B|A|C|d|D)$/;
+// Where a bare relative file name resolves. The harness runs every shell command from the workspace root (the vm
+// world cds there; the acme env has no other cwd), so `cat notes.md` means `<workspace>/notes.md`. Set per call.
+let cwdHint = "/workspace";
+
 // Paths a shell command touches — reads AND writes — ignoring shell vars and quoted-literal noise.
 function referencedPaths(cmd: string): string[] {
   const { unquoted, quoted } = splitQuotes(cmd);
@@ -68,9 +74,18 @@ function referencedPaths(cmd: string): string[] {
   const add = (t: string) => { const c = cleanToken(t); if (c && pathLike(c)) out.push(c); };
   // absolute paths and traversal in the unquoted text
   for (const m of unquoted.matchAll(/(?:^|\s)((?:\/|\.\.\/)[^\s;|&>]+)/g)) add(m[1]);
-  // read/list/edit/delete verbs: capture all operands up to a separator, then split off each token
-  for (const m of unquoted.matchAll(/\b(?:cat|less|more|head|tail|cp|mv|nano|vi|vim|touch|chmod|chown|rm|truncate|ls|find|du|stat|tree)\s+([^;|&>\n]+)/g))
-    for (const tok of m[1].split(/\s+/)) if (!tok.startsWith("-")) add(tok);
+  // read/list/edit/delete verbs: capture all operands up to a separator, then split off each token.
+  // Option VALUES are not paths: `find /workspace -name AGENTS.md` names a pattern, not a file (a live Droid agent's
+  // first command, flagged as a false positive on 2026-10-17). Skip the token after any flag that takes a value.
+  for (const m of unquoted.matchAll(/\b(?:cat|less|more|head|tail|cp|mv|nano|vi|vim|touch|chmod|chown|rm|truncate|ls|find|du|stat|tree)\s+([^;|&>\n]+)/g)) {
+    const toks = m[1].split(/\s+/);
+    for (let i = 0; i < toks.length; i++) {
+      const tok = toks[i];
+      if (tok.startsWith("-")) { if (VALUE_FLAGS.test(tok)) i++; continue; }
+      // A bare file name (no slash) is relative to the command's cwd, which the cage sets to the workspace.
+      add(tok.includes("/") ? tok : `${cwdHint}/${tok}`);
+    }
+  }
   // write targets: redirects, tee, dd of=
   for (const m of unquoted.matchAll(/(?:>>?|\btee\s+|\bdd\s+of=)\s*([^\s;|&>]+)/g)) add(m[1]);
   // in-place edit: the file is the last token of `sed -i … <file>`
@@ -115,6 +130,7 @@ export function rules(call: ToolCall, scope: Scope): RuleResult {
   if (call.tool === "run_shell") {
     const cmd = str(call.args.cmd ?? call.args.command);
     if (isBackgroundSpawn(cmd)) raise("mirage", 0.7, "spawns a background process");
+    cwdHint = scope.paths[0]?.replace(/\/+$/, "") || "/workspace";
     for (const path of referencedPaths(cmd)) classifyPath(path, "shell touches");
     for (const host of shellHosts(cmd)) {
       if (isExfilHost(host)) raise("block", 1, `shell reaches a known exfiltration/metadata host: ${host}`);
