@@ -3,6 +3,24 @@
 This file gives every teammate's Claude the same context. Read it fully before writing code.
 HackHarvard 2026 (Oct 16 to 18). Devpost submission due **Sunday Oct 18, 8 AM ET**. Judging 9 AM to 12 PM.
 
+## Current state (Sun Oct 18, ~3:30 AM): read this first
+
+The build is feature-frozen for submission. The repo is now **judge-facing**.
+
+- **Dev notes were removed from the repo** on purpose: `FISCUS.md`, `EVAN.md`, `SANDESH.md`, `DEMO-SCRIPT.md`, `VIDEO-DEMO-SCRIPT.md`, `DEVPOST.md`, `reports/`, `research_notes/`, `server/voice/DEPLOY.md` + `NOTIFICATIONS.md`, `server/mirage/README.md`, `data/mirage/README.md`. They are still in git history (`git log --all -- <path>`). **Do not add new planning / handoff / script `.md` files to the repo.** Keep them outside it or in your own scratch space. `evals/*.md` and `server/watcher/eval/results*.md` stay as evidence.
+- **`README.md` is the judge-facing write-up** (pitch, results table, per-sponsor "where and how" with code links, run steps). Factory requires the README to explain where Droid is used; that section is under "How we use each sponsor". Keep any edit there accurate: every claim must match the code and measured runs.
+- **Dashboard (`console/`):** white pages with black VM cards by default (the header button toggles dark, and the choice carries across views). The header **Demo** switch is on by default with **15 agents**: 14 live Droid plus 1 scripted `billing-sync` rogue launched mid-run (after the live agents make 12 calls, 30 s fallback). It spends 8 calls / about 15 s in the mirage (loop depth 2), then is blocked for using the decoy key. A run ends on the **Results** page (hero out-of-scope count, call-split bar, watcher on/off bars, per-agent timeline). The watcher on/off control is the slide switch on the setup page. Agent-type labels are intentionally hidden in the UI; the README and Devpost disclose the scripted agent.
+- **Local `.env` settings the demo relies on** (not committed; add them to yours): `CAGE_MAX_LIVE_DROID=8` (each live Droid uses about 200 to 270 MB; more lags an 8 GB laptop) and `CAGE_MIRAGE_LATENCY_MS=1500` (keeps the rogue in the mirage long enough to watch).
+- **Measured, citable numbers:**
+  - 25-agent rehearsal: 442 calls, 438 pass / 3 mirage / 1 block, 0 real out-of-scope, 0 of 24 live Droid crossed, crossing about 7 s in, 2:23 total.
+  - Watcher eval: 34/34, 0/14 false positives.
+  - Cage four-condition: 5 → 0.
+  - Live handshake: 74 s verified call (Oct 17).
+- **Open issues, don't claim these work:**
+  - Analyst notifications have been failing in recent runs (`notification.failed` in `/api/audit`); check the tunnel/ElevenLabs config before relying on the phone on stage.
+  - The voice `contain` tool is not attached to the published ElevenLabs agent.
+  - Grok is not built.
+
 > **Pivot note.** This replaces the old "Batman SOC defender" direction. Much of the old engine is reused, not thrown away — see "What we keep, change, and cut". The previous Batman spec is in git history if you need to refer back.
 
 ## What we are building

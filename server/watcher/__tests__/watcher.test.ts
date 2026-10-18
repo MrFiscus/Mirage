@@ -198,7 +198,7 @@ describe("watcher recognizes mirage-served decoys (shared DECOY- marker)", () =>
   });
 });
 
-// Task 1 (FISCUS.md): the two real false positives from the live 100-agent Droid fleet log, plus the
+// The two real false positives from the live 100-agent Droid fleet log, plus the
 // new deterministic catches (list verbs, quoted-literal paths, shell URLs). Uses the live Acme scope.
 const acme: Session = { ...session, scope: { paths: ["/workspace"], hosts: ["registry.acme.internal", "wiki.acme.internal", "scorer.acme.internal"], tools: ["run_shell", "http_get", "http_post", "read_file"] } };
 

@@ -157,7 +157,8 @@ function setTheme(theme) {
   document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#0a0a0b' : '#ffffff';
 }
 $('#theme-toggle').onclick = () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
-setTheme('dark');
+// White pages with black VM cards by default; a theme picked with the header button carries across views.
+setTheme('light');
 
 function renderFleetPreview(count) {
   // An abstract view of the topology; large selections share a bounded set of representative nodes.
