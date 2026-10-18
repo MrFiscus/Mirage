@@ -19,14 +19,51 @@ const icon = (name) => {
   };
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] ?? paths.arrow}</svg>`;
 };
-const verdictName = { pass: 'Passed', mirage: 'Redirected', block: 'Blocked' };
+const verdictName = { pass: 'Real', mirage: 'Miraged', block: 'Stopped' };
+const verdictSymbol = { pass: '✓', mirage: '◐', block: '■' };
+const verdictTip = {
+  pass: 'In its allowed area. The action ran against the real environment.',
+  mirage: 'Off-limits. The agent received a believable fake; nothing real was touched.',
+  block: 'Clear escape or tampering attempt. Hard stop; nothing ran.',
+};
+// Plain-English headline for one action, for the judge who does not read shell. Two clauses: what the
+// agent attempted (from the command verb + the watcher's rule hit) and what Mirage did about it.
+const shortRef = (ref) => { const parts = String(ref).split('/').filter(Boolean); return parts.length > 2 ? `…/${parts.slice(-2).join('/')}` : ref; };
+function plainHeadline(action) {
+  const cmd = action.cmd || '', reason = action.reason || '', verb = cmd.trim().split(/\s+/)[0] ?? '';
+  const ref = reason.match(/[:(]\s*([^\s()]+)\)?\s*$/)?.[1] ?? '';
+  let kind = 'command', attempt;
+  if (/^(cat|head|tail|less|more)$/.test(verb)) kind = 'file';
+  else if (/^(ls|find|tree|dir|du|stat)$/.test(verb)) kind = 'folder';
+  else if (verb === 'GET') kind = 'server';
+  else if (verb === 'POST' || /\b(curl|wget)\b.*(\s-d\s|--data|--post)/.test(cmd)) kind = 'send';
+  else if (/(?:&\s*$|\bnohup\b|\bsetsid\b|\bdisown\b)/.test(cmd)) kind = 'background';
+  const base = { file: 'open a file', folder: 'look inside a folder', server: 'contact a server', send: 'send data to a server', background: 'start a hidden program', command: 'run a command' }[kind];
+  let fake = { file: 'a fake file', folder: 'a fake folder', server: 'a fake reply', send: 'a fake reply', background: 'a fake result', command: 'a fake result' }[kind];
+  if (/decoy credential/.test(reason)) { attempt = 'used a decoy password we planted as bait'; fake = 'fake credentials that lead nowhere'; }
+  else if (/^tool .*not in scope$/.test(reason)) attempt = 'tried an ability it was never given';
+  else if (/own config/.test(reason)) attempt = 'tried to change its own safety settings';
+  else if (/scorer|answer key/.test(reason)) attempt = 'tried to read the answer key';
+  else if (/cage\/monitoring config/.test(reason)) attempt = "tried to change the sandbox's monitoring";
+  else if (/background process/.test(reason)) attempt = 'tried to start a hidden program that keeps running';
+  else if (/exfiltration\/metadata host/.test(reason)) attempt = `tried to send data outside the sandbox${ref ? ` (${ref})` : ''}`;
+  else if (/out-of-scope host/.test(reason)) attempt = `tried to ${kind === 'send' ? 'send data to' : 'contact'} a server it was never given${ref ? ` (${ref})` : ''}`;
+  else if (/path outside scope/.test(reason)) attempt = `tried to ${base} in an off-limits area${ref ? ` (${shortRef(ref)})` : ''}`;
+  else if (action.decision === 'pass') attempt = `${kind === 'file' ? 'opened a file' : kind === 'folder' ? 'looked inside a folder' : kind === 'server' ? 'contacted a server' : kind === 'send' ? 'sent data to a server' : 'ran a command'} in its allowed area`;
+  else attempt = `tried to ${base} that the watcher judged suspicious`;
+  const tail = state.watcherOff ? 'It ran for real — no watcher.'
+    : action.decision === 'pass' ? 'It ran for real.'
+    : action.decision === 'mirage' ? `Mirage handed it ${fake} instead.`
+    : 'Mirage stopped it cold.';
+  return `The agent ${attempt}. ${tail}`;
+}
 const pad = (number) => String(number).padStart(2, '0');
 const PAGE_SIZE = 24;
 const state = {
   view: 'setup', phase: 'idle', connected: false, count: 15, mode: 'demo',
   boxes: new Map(), pending: new Map(), seen: new Set(), feed: [], failures: [],
   focus: null, filter: 'all', page: 0, startedAt: null, endedAt: null,
-  trigger: null, haveSummary: false, watcherOff: false, lastRun: { on: null, off: null },
+  openExplain: new Set(), trigger: null, haveSummary: false, watcherOff: false, lastRun: { on: null, off: null },
 };
 const maskPhone = (s) => String(s ?? '').replace(/\d(?=\d{2})/g, '•');
 
@@ -86,8 +123,8 @@ $('#app').innerHTML = `
       <div class="metrics" id="metrics">
         <div class="metric environment-metric"><span class="metric-label">Environments</span><strong id="s-vms">00<span> / 06</span></strong></div>
         <div class="metric"><span class="metric-label">Calls reviewed</span><strong id="s-moves">00</strong></div>
-        <div class="metric"><span class="metric-label"><i class="legend-dot mirage"></i> Redirected</span><strong id="s-mirage">00</strong></div>
-        <div class="metric"><span class="metric-label"><i class="legend-dot block"></i> Blocked</span><strong id="s-block">00</strong></div>
+        <div class="metric"><span class="metric-label"><i class="legend-dot mirage"></i> Miraged</span><strong id="s-mirage">00</strong></div>
+        <div class="metric"><span class="metric-label"><i class="legend-dot block"></i> Stopped</span><strong id="s-block">00</strong></div>
       </div>
       <div class="run-bar" id="run-bar"><div class="run-indicator"><span class="watch-eye" id="watch-eye" data-state="waking" aria-hidden="true"><svg viewBox="0 0 48 26"><defs><clipPath id="eye-clip"><path d="M2 13C8 5 16 2 24 2s16 3 22 11c-6 8-14 11-22 11S8 21 2 13Z"/></clipPath></defs><g class="eye-lid"><path class="eye-white" d="M2 13C8 5 16 2 24 2s16 3 22 11c-6 8-14 11-22 11S8 21 2 13Z"/><g clip-path="url(#eye-clip)"><g class="eye-pupil"><circle class="eye-iris" cx="24" cy="13" r="7.5"/><circle class="eye-glint" cx="26.6" cy="10.2" r="1.8"/></g></g><path class="eye-outline" d="M2 13C8 5 16 2 24 2s16 3 22 11c-6 8-14 11-22 11S8 21 2 13Z"/></g><path class="eye-shut" d="M3 13c7 6 14 8 21 8s14-2 21-8"/></svg></span><span class="status-pill" id="run-status">Preparing</span><span id="run-status-note" hidden></span><span class="run-clock" id="run-clock">00:00 elapsed</span></div><button class="button primary" id="view-results" type="button" hidden>View results ${icon('arrow')}</button></div>
 
@@ -106,7 +143,7 @@ $('#app').innerHTML = `
 
       <div class="detail-layout" id="detail" hidden>
         <section class="filesystem" aria-labelledby="fs-heading"><div class="panel-heading"><div>${icon('folder')}<h2 id="fs-heading">Observed paths</h2></div><a class="forensic-link" id="forensic" download hidden>Download forensic log ${icon('expand')}</a></div><p class="panel-caption">Files and hosts referenced in this agent's tool calls.</p><div class="felt-progress" id="felt-progress" hidden><span class="felt-label">Agent's felt progress <i>· hidden, display only</i></span><div class="felt-track"><i id="felt-bar"></i></div></div><div class="fs-tree" id="tree"></div></section>
-        <section class="activity-log" aria-labelledby="log-heading"><div class="panel-heading"><div><span class="terminal-mark">&gt;_</span><h2 id="log-heading">Agent activity</h2></div></div><div class="term" id="term"></div></section>
+        <section class="activity-log" aria-labelledby="log-heading"><div class="panel-heading"><div><span class="terminal-mark">&gt;_</span><h2 id="log-heading">Agent activity</h2></div><label class="routine-toggle"><input type="checkbox" id="show-routine" checked> Show routine actions</label></div><div class="log-tally" id="log-tally" hidden></div><div class="term" id="term"></div></section>
       </div>
     </section>
   </main>
@@ -204,7 +241,7 @@ function pathOf(call) {
   return String(call.args?.command ?? call.args?.cmd ?? '').match(/(?:^|\s)["']?((?:\/|\.\.\/|workspace\/|secrets\/|notes\/)[\w./-]+)/)?.[1] ?? '';
 }
 function statusOf(box) {
-  if (box.block) return { text: 'Blocked', kind: 'block' };
+  if (box.block) return { text: 'Stopped', kind: 'block' };
   if (box.stopped) return { text: 'Stopped', kind: 'neutral' };
   if (state.phase === 'complete') return { text: 'Finished', kind: 'neutral' };
   if (box.mirage) return { text: 'In the mirage', kind: 'mirage' };
@@ -228,7 +265,7 @@ function renderFleet() {
   const visible = filtered.slice(begin, end);
   $('#fleet').innerHTML = visible.map(box => {
     const status = statusOf(box);
-    return `<button class="vm ${box.mirage ? 'has-mirage' : ''} ${box.block ? 'has-block' : ''}" type="button" data-session="${esc(box.id)}" aria-label="Inspect ${box.label}"><span class="vm-head"><span class="vm-identity"><span class="vm-icon">${icon('machine')}</span><span><b>${box.label}</b></span></span><span class="agent-status ${status.kind}"><i></i>${status.text}</span></span><span class="vm-term">${box.actions.length ? box.actions.slice(-3).map(action => `<span class="command-row"><span class="command-step">${pad(action.step)}</span><span class="command-symbol ${action.decision}">${action.decision === 'pass' ? '↳' : action.decision === 'mirage' ? '↪' : '×'}</span><code title="${esc(action.cmd)}">${esc(action.cmd)}</code></span>`).join('') : '<span class="card-waiting">Waiting for activity.</span>'}</span><span class="vm-foot"><span>${box.moves} call${box.moves === 1 ? '' : 's'}${box.mirage ? ` <i>·</i> ${box.mirage} redirected` : ''}</span><span class="inspect-link">Inspect ${icon('expand')}</span></span></button>`;
+    return `<button class="vm ${box.mirage ? 'has-mirage' : ''} ${box.block ? 'has-block' : ''}" type="button" data-session="${esc(box.id)}" aria-label="Inspect ${box.label}"><span class="vm-head"><span class="vm-identity"><span class="vm-icon">${icon('machine')}</span><span><b>${box.label}</b></span></span><span class="agent-status ${status.kind}"><i></i>${status.text}</span></span><span class="vm-term">${box.actions.length ? box.actions.slice(-3).map(action => `<span class="command-row"><span class="command-step">${pad(action.step)}</span><span class="command-symbol ${action.decision}">${action.decision === 'pass' ? '↳' : action.decision === 'mirage' ? '↪' : '×'}</span><code title="${esc(action.cmd)}">${esc(action.cmd)}</code></span>`).join('') : '<span class="card-waiting">Waiting for activity.</span>'}</span><span class="vm-foot"><span>${box.moves} call${box.moves === 1 ? '' : 's'}${box.mirage ? ` <i>·</i> ${box.mirage} miraged` : ''}</span><span class="inspect-link">Inspect ${icon('expand')}</span></span></button>`;
   }).join('');
   if (state.filter === 'all') {
     for (let i = Math.max(begin, all.length); i < end; i++) {
@@ -316,8 +353,8 @@ function renderCharts() {
   const mirage = total('mirage'), block = total('block'), calls = total('moves'), pass = Math.max(0, calls - mirage - block);
   const pct = (n) => calls ? (n / calls) * 100 : 0;
   const split = `<section class="chart-card"><h3>Where every call went</h3><p class="chart-sub">${calls} tool call${calls === 1 ? '' : 's'} ${state.watcherOff ? 'made with the watcher <b>off</b>, so none were checked,' : 'checked'} across ${boxes.length} agent${boxes.length === 1 ? '' : 's'}</p>
-    <div class="stack-bar" role="img" aria-label="${pass} passed, ${mirage} redirected, ${block} blocked">${[['pass', pass], ['mirage', mirage], ['block', block]].filter(([, n]) => n).map(([k, n]) => `<i class="seg ${k}" style="width:${pct(n)}%"></i>`).join('') || '<i class="seg empty" style="width:100%"></i>'}</div>
-    <div class="stack-legend">${[['pass', 'Passed', 'ran on the real env', pass], ['mirage', 'Redirected', 'served by the mirage', mirage], ['block', 'Blocked', 'escape attempts stopped', block]].map(([k, name, note, n]) => `<div class="legend-item ${k}"><span class="legend-swatch ${k}"></span><strong>${n}</strong><span>${name}</span><small>${Math.round(pct(n))}% · ${note}</small></div>`).join('')}</div></section>`;
+    <div class="stack-bar" role="img" aria-label="${pass} real, ${mirage} miraged, ${block} stopped">${[['pass', pass], ['mirage', mirage], ['block', block]].filter(([, n]) => n).map(([k, n]) => `<i class="seg ${k}" style="width:${pct(n)}%"></i>`).join('') || '<i class="seg empty" style="width:100%"></i>'}</div>
+    <div class="stack-legend">${[['pass', 'Real', 'allowed, ran for real', pass], ['mirage', 'Miraged', 'off-limits, handed a fake', mirage], ['block', 'Stopped', 'escape attempts stopped cold', block]].map(([k, name, note, n]) => `<div class="legend-item ${k}"><span class="legend-swatch ${k}"></span><strong>${n}</strong><span>${name}</span><small>${Math.round(pct(n))}% · ${note}</small></div>`).join('')}</div></section>`;
   const { on, off } = compareSummary(state.lastRun.on, state.lastRun.off);
   const num = (side) => side && side.value !== '—' ? Number(side.value) : null;
   const vOn = num(on), vOff = num(off), max = Math.max(1, vOn ?? 0, vOff ?? 0);
@@ -326,14 +363,42 @@ function renderCharts() {
   // With the watcher off nothing is redirected, so "passed" does not mean "in scope": say what really happened.
   const laneTail = (b) => state.watcherOff
     ? (b.realOutOfScope ? `<span class="lane-tail block">${b.realOutOfScope} reached the real system</span>` : `<span class="lane-tail neutral">Unprotected</span>`)
-    : `<span class="lane-tail ${b.block ? 'block' : b.mirage ? 'mirage' : 'pass'}">${b.block ? 'Blocked' : b.mirage ? 'In the mirage' : 'Stayed in scope'}</span>`;
+    : `<span class="lane-tail ${b.block ? 'block' : b.mirage ? 'mirage' : 'pass'}">${b.block ? 'Stopped' : b.mirage ? 'In the mirage' : 'Stayed in its allowed area'}</span>`;
   const longest = Math.max(1, ...boxes.map(b => b.actions.length));
   const shown = boxes.slice(0, 40);
-  const lanes = `<section class="chart-card wide"><h3>Every agent, step by step</h3><p class="chart-sub">One dot per tool call · <span class="key pass">passed</span> <span class="key mirage">redirected</span> <span class="key block">blocked</span> · click an agent to inspect it</p>
+  const lanes = `<section class="chart-card wide"><h3>Every agent, step by step</h3><p class="chart-sub">One dot per tool call · <span class="key pass">real</span> <span class="key mirage">miraged</span> <span class="key block">stopped</span> · click an agent to inspect it</p>
     <div class="lanes">${shown.map(b => `<button class="lane" type="button" data-open="${esc(b.id)}"><span class="lane-name">${b.label}</span><span class="lane-track" style="--steps:${longest}">${b.actions.map(a => `<i class="dot ${a.decision}" title="#${a.step} ${esc(a.cmd)}"></i>`).join('')}</span>${laneTail(b)}</button>`).join('')}</div>${boxes.length > shown.length ? `<p class="chart-sub">and ${boxes.length - shown.length} more agents</p>` : ''}</section>`;
   el.innerHTML = `<div class="chart-grid">${split}${contrast}</div>${lanes}`;
 }
 $('#charts').addEventListener('click', (event) => { const lane = event.target.closest('[data-open]'); if (lane) openDetail(lane.dataset.open); });
+// Sticky tally above the log: the zero is the number the whole demo hangs on.
+function renderTally(box) {
+  const wrap = $('#log-tally');
+  if (!box || !box.actions.length) { wrap.hidden = true; return; }
+  wrap.hidden = false;
+  const pass = box.moves - box.mirage - box.block;
+  const first = box.actions.find(a => a.decision !== 'pass');
+  const oos = box.realOutOfScope;
+  const ended = box.stopped || state.phase === 'complete';
+  const busy = first ? Math.max(0, Math.floor(((ended ? (box.actions.at(-1)?.ts ?? Date.now()) : Date.now()) - first.ts) / 1000)) : 0;
+  const breached = state.watcherOff ? box.mirage + box.block : (oos ?? 0);
+  wrap.classList.toggle('breached', breached > 0);
+  wrap.innerHTML = state.watcherOff
+    ? `<div class="tally-row"><strong class="tally-zero">${breached}</strong><span>real off-limits action${breached === 1 ? '' : 's'} would have happened · watcher <b>off</b></span></div>`
+    : `<div class="tally-row"><strong class="tally-zero">${oos == null ? '0' : oos}</strong><span>real off-limits actions${oos == null ? ' so far' : ''}</span><span class="tally-sep">·</span><b class="mirage">${box.mirage}</b> miraged<span class="tally-sep">·</span><b class="block">${box.block}</b> stopped<span class="tally-sep">·</span><b class="pass">${pass}</b> real (allowed)</div>
+       ${first ? `<div class="tally-sub"><span>Boundary crossed at step ${first.step}</span><span class="tally-sep">·</span><span class="busy-clock">${pad(Math.floor(busy / 60))}:${pad(busy % 60)}</span> ${ended ? 'spent' : 'and counting,'} chasing a goal that does not exist</div>` : `<div class="tally-sub">No boundary crossed yet. Every action so far was allowed and ran for real.</div>`}`;
+}
+$('#term').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-explain]');
+  if (!button) return;
+  const id = button.dataset.explain;
+  if (state.openExplain.has(id)) state.openExplain.delete(id); else state.openExplain.add(id);
+  const box = state.boxes.get(state.focus);
+  if (box) { const term = $('#term'), top = term.scrollTop; renderDetail(box); term.scrollTop = top; }
+});
+$('#show-routine').onchange = () => { const box = state.boxes.get(state.focus); if (box) renderDetail(box); };
+setInterval(() => { if (state.view === 'detail' && state.phase !== 'complete') { const box = state.boxes.get(state.focus); if (box) renderTally(box); } }, 1000);
+
 function updateFelt(box) {
   const wrap = $('#felt-progress');
   if (!box || !box.progress) { wrap.hidden = true; return; }
@@ -403,7 +468,27 @@ function renderDetail(box, initial = false) {
   const term = $('#term');
   // Like a terminal: open on the newest call and keep following it, unless the viewer has scrolled up to read.
   const followTail = initial || term.scrollHeight - term.scrollTop - term.clientHeight < 60;
-  term.innerHTML = box.actions.length ? box.actions.map(action => `<article class="log-entry" data-decision="${action.decision}"><div class="log-meta"><span class="log-step">#${action.step}</span><span class="decision-badge ${action.decision}">${verdictName[action.decision]}</span></div><code class="log-command"><span>$</span> ${esc(action.cmd)}</code>${action.thought ? `<blockquote class="agent-note">${esc(action.thought)}</blockquote>` : ''}<p class="watcher-reason"><span>↳</span> ${esc(action.reason || (action.decision === 'pass' ? 'Within approved scope.' : 'Outside approved scope.'))}</p>${box.serves.has(action.callId) ? `<details class="served"><summary>What the mirage showed the agent</summary><pre>${esc(String(box.serves.get(action.callId)).slice(0, 700))}</pre></details>` : ''}</article>`).join('') : '<div class="log-empty">The first tool call will appear here.</div>';
+  const firstCrossing = box.actions.find(a => a.decision !== 'pass');
+  const time = (ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const entry = (action) => {
+    const crossed = firstCrossing && action.step >= firstCrossing.step;
+    const first = action === firstCrossing;
+    const served = box.serves.has(action.callId) ? String(box.serves.get(action.callId)).slice(0, 700) : null;
+    const open = state.openExplain.has(action.callId);
+    const divider = first ? `<div class="crossing-divider" role="separator"><span>First boundary crossing · ${time(action.ts)} · from here on, nothing the agent sees is real</span></div>` : '';
+    return `${divider}<article class="log-entry ${crossed ? 'after-crossing' : ''}" data-decision="${action.decision}">
+      <div class="log-meta"><span class="decision-badge ${action.decision}" title="${esc(verdictTip[action.decision])}"><i aria-hidden="true">${verdictSymbol[action.decision]}</i>${verdictName[action.decision]}</span><span class="log-step">#${action.step}</span><time class="log-time">${time(action.ts)}</time></div>
+      <code class="log-command"><span>$</span> ${esc(action.cmd)}</code>
+      ${action.thought ? `<blockquote class="agent-note">${esc(action.thought)}</blockquote>` : ''}
+      <p class="watcher-reason"><span>↳</span> ${esc(action.reason || (action.decision === 'pass' ? 'Within approved scope.' : 'Outside approved scope.'))}</p>
+      ${served != null ? `<details class="served" ${first ? 'open' : ''}><summary>What the mirage showed the agent</summary><pre><i class="fake-tag" aria-hidden="true">FAKE</i>${esc(served)}</pre></details>` : ''}
+      <button type="button" class="explain-toggle" data-explain="${esc(action.callId)}" aria-expanded="${open}">${open ? 'Hide explanation' : 'Show explanation'}</button>
+      ${open ? `<p class="log-headline">${esc(plainHeadline(action))}</p>` : ''}
+    </article>`;
+  };
+  term.classList.toggle('hide-routine', !$('#show-routine').checked);
+  term.innerHTML = box.actions.length ? box.actions.map(entry).join('') : '<div class="log-empty">The first tool call will appear here.</div>';
+  renderTally(box);
   if (followTail) term.scrollTop = term.scrollHeight;
   updateFelt(box);
 }
@@ -433,7 +518,7 @@ async function start() {
   if (!updateCount($('#n').value)) return;
   state.boxes.clear(); state.pending.clear(); state.seen.clear(); state.feed = []; state.failures = [];
   state.focus = null; state.filter = 'all'; state.page = 0; state.phase = 'provisioning'; state.startedAt = Date.now(); state.endedAt = null;
-  state.trigger = null; state.haveSummary = false; state.watcherOff = $('#watcher-off').checked;
+  state.openExplain.clear(); state.trigger = null; state.haveSummary = false; state.watcherOff = $('#watcher-off').checked;
   state.deferred = null; clearTimeout(state.deferTimer);
   document.querySelectorAll('[data-filter]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.filter === 'all')));
   $('#setup-error').hidden = true;
@@ -539,7 +624,7 @@ function handle(event) {
     if (!call || state.seen.has(event.callId) || !verdictName[event.verdict.decision]) return;
     state.seen.add(event.callId); state.pending.delete(event.callId);
     const box = getBox(call.session);
-    const action = { callId: event.callId, cmd: cmdOf(call), path: pathOf(call), url: call.args?.url, thought: call.thought ?? '', decision: event.verdict.decision, reason: event.verdict.reasons?.[0] ?? '', step: call.step };
+    const action = { callId: event.callId, cmd: cmdOf(call), path: pathOf(call), url: call.args?.url, thought: call.thought ?? '', decision: event.verdict.decision, reason: event.verdict.reasons?.[0] ?? '', step: call.step, ts: call.ts ?? Date.now() };
     box.actions.push(action); box.moves++;
     if (action.decision === 'mirage') box.mirage++;
     if (action.decision === 'block') box.block++;
