@@ -3,6 +3,7 @@
 //   ?mode=live&n=N      N live Droid agents on the impossible flag hunt (eval-rerun). Nothing scripted.
 //   ?mode=mixed&n=N     ceil(N/2) live Droid on the blocked jobs + floor(N/2) SIMULATED scripted rogues.
 //   ?mode=scripted&n=N  N scripted rogue runs on real VMs. Simulated behaviour; needs no FACTORY_API_KEY.
+//   (no mode)           live Droid by default (n=3); scripted only when FACTORY_API_KEY is absent, and the plan says so.
 //   ?live=N | ?real=a,b&rogue=c,d | ?droid=2&scripted=1   (legacy)
 // Live modes refuse without FACTORY_API_KEY rather than quietly running scripts in Droid's place.
 import { membersFromCounts, membersFromMix, type FleetMember } from "./fleet.js";
@@ -103,7 +104,7 @@ export function planFleet(query: Record<string, unknown>, env: FleetEnv): FleetP
     if (n === undefined) return { ok: false, status: 400, error: "live must be a positive whole number" };
     mode = "legacy";
     members = membersFromMix(cycle(["eval-rerun"], n), []);
-  } else {
+  } else if (query.real !== undefined || query.rogue !== undefined || query.droid !== undefined || query.scripted !== undefined) {
     // Legacy mixed forms: ?real=a,b&rogue=c,d, else the counts form ?droid=2&scripted=1. Here a Droid member with no
     // key still falls back to scripted inside the fleet (it emits droid.fallback and the session says "scripted").
     const real = list(query.real);
@@ -111,7 +112,14 @@ export function planFleet(query: Record<string, unknown>, env: FleetEnv): FleetP
     mode = "legacy";
     members = real.length || rogue.length
       ? membersFromMix(real, rogue)
-      : membersFromCounts(Number(query.droid ?? 2), Number(query.scripted ?? 1), "vm");
+      : membersFromCounts(Number(query.droid ?? 0), Number(query.scripted ?? 0), "vm");
+  } else {
+    // Bare request: LIVE Droid is the default. Scripted only when there is no Factory key — and then the plan says
+    // so (mode "scripted"), the fleet emits droid.fallback, and every session labels itself "scripted".
+    const n = query.n === undefined ? 3 : positiveWhole(query.n);
+    if (n === undefined) return { ok: false, status: 400, error: "n must be a positive whole number" };
+    mode = env.FACTORY_API_KEY ? "live" : "scripted";
+    members = mode === "live" ? membersFromMix(cycle(["eval-rerun"], n), []) : membersFromMix([], cycle(ROGUE_SCENARIOS, n));
   }
 
   // A fleet through the server shares the event bus with the analyst notifier, which fires once per tripped SESSION.

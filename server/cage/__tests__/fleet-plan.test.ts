@@ -73,6 +73,15 @@ describe("planFleet: notifier guard and legacy forms", () => {
     expect(planFleet(big, {}).ok).toBe(true); // mock notifier: allowed
   });
 
+  it("a bare request defaults to live Droid; without a key it is scripted and says so", () => {
+    const live3 = planFleet({}, KEY);
+    expect(live3).toMatchObject({ ok: true, mode: "live" });
+    if (live3.ok) expect(kinds(live3.members)).toEqual(["droid", "droid", "droid"]);
+    const noKey = planFleet({ n: "2" }, {});
+    expect(noKey).toMatchObject({ ok: true, mode: "scripted" });
+    if (noKey.ok) expect(kinds(noKey.members)).toEqual(["scripted", "scripted"]);
+  });
+
   it("still parses ?live=N and the counts form", () => {
     expect(planFleet({ live: "3" }, KEY)).toMatchObject({ ok: true, mode: "legacy" });
     expect(planFleet({ live: "3" }, {})).toMatchObject({ ok: false, status: 503 });

@@ -15,6 +15,9 @@ import { mirageRouter } from "./mirage/routes.js";
 import { CageBus } from "./cage/events.js";
 import { runSession } from "./cage/harness.js";
 import { ScriptedAttacker, ACME_SCRIPT } from "./cage/attackers/scripted.js";
+import type { Attacker } from "./cage/attacker.js";
+import type { DroidAttacker } from "./cage/attackers/droid.js";
+import { TASK_PROMPT } from "./mirage/acme.js";
 import { makeRealMirage, NullSandbox, realWatcher } from "./cage/wire.js";
 import { runCageFleet } from "./cage/fleet.js";
 import { planFleet, chooseConcurrency } from "./cage/fleet-plan.js";
@@ -55,15 +58,24 @@ mountDefense(app, () => undefined);
 // the core bus, which the subscription above already forwards to the console WebSocket.
 app.use(mirageRouter);
 
-// Cage lane (Person A): start one end-to-end run — scripted attacker → real watcher → real mirage, honest
-// `pass` calls running in the in-process Acme world (no Daytona). The cage emits on its own CageBus; we bridge
-// every MirageEvent onto the core bus so the dashboard renders the run live. ?watcher=off for the contrast run.
-app.post("/cage/start", (request, response) => {
+// Cage lane (Person A): start one end-to-end run — attacker → real watcher → real mirage, honest `pass` calls
+// running in the in-process Acme world (no Daytona). LIVE Droid is the default attacker; ?attacker=scripted asks for
+// the scripted rogue explicitly, and with no FACTORY_API_KEY the run is scripted and says so (droid.fallback audit,
+// session.attacker "scripted"). The cage emits on its own CageBus; we bridge every MirageEvent onto the core bus so
+// the dashboard renders the run live. ?watcher=off for the contrast run.
+app.post("/cage/start", async (request, response) => {
   const watcherOn = request.query.watcher !== "off";
-  const bus = new CageBus(`${CAGE_RUNS_DIR}/${Date.now()}-dashboard-${watcherOn ? "on" : "off"}.jsonl`);
+  const asked = request.query.attacker === "scripted" ? "scripted" : "droid";
+  const kind = asked === "droid" && !process.env.FACTORY_API_KEY ? "scripted" : asked;
+  const bus = new CageBus(`${CAGE_RUNS_DIR}/${Date.now()}-dashboard-${kind}-${watcherOn ? "on" : "off"}.jsonl`);
   const unbridge = bus.subscribe((event) => publish(event));
+  if (asked === "droid" && kind === "scripted") bus.emit({ type: "audit", actor: "cage", action: "droid.fallback", detail: "no FACTORY_API_KEY, running scripted", ts: Date.now() });
+  let droid: DroidAttacker | undefined;
+  const attacker: Attacker = kind === "droid"
+    ? (droid = (await import("./cage/attackers/droid.js")).makeDroidAttacker({ task: TASK_PROMPT }))
+    : new ScriptedAttacker(ACME_SCRIPT);
   void runSession({
-    attacker: new ScriptedAttacker(ACME_SCRIPT),
+    attacker,
     watcher: realWatcher,
     mirage: makeRealMirage(null),
     sandbox: new NullSandbox(),
@@ -71,10 +83,11 @@ app.post("/cage/start", (request, response) => {
     watcherOn,
     honestEnv: "acme",
     mirageLatencyMs,
+    tokensUsed: () => droid?.tokensUsed,
   })
     .catch((error: Error) => publish({ type: "audit", actor: "cage", action: "run.failed", detail: error.message, ts: Date.now() }))
     .finally(() => unbridge());
-  return response.status(202).json({ started: true, watcherOn });
+  return response.status(202).json({ started: true, attacker: kind, requested: asked, watcherOn });
 });
 
 // Cage fleet (Person A, System 3): N agents, each in its own real "vm" world, all watched by the one real watcher.
